@@ -1,0 +1,620 @@
+/* 「想吃啥」样式。配色走暖色 —— 这是个跟吃有关的工具。
+   375px 宽（手机竖屏）下也要能用：对应 PRD 的 F2 那条验收标准。 */
+
+:root {
+  --brand: #e8590c;
+  --brand-soft: #fff1e6;
+  --ink: #2b2620;
+  --ink-2: #6b6157;
+  --ink-3: #9a9088;
+  --line: #ece3d9;
+  --bg: #fffaf5;
+  --card: #ffffff;
+  --radius: 14px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  font-size: 15px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+}
+
+.app {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 16px 40px;
+}
+
+/* 顶栏 */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 14px 0 12px;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+}
+
+.brand {
+  font-size: 19px;
+  font-weight: 700;
+  color: var(--brand);
+  letter-spacing: 0.5px;
+}
+
+.brand-sub {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.nav {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.nav-item {
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--ink-2);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.nav-item:hover {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+.nav-item.active {
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-weight: 600;
+}
+
+/* 主区 */
+.main {
+  padding-top: 20px;
+}
+
+.panel {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 22px 20px;
+}
+
+.panel h1 {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+
+.hint {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+/* 存储不可用时的提示条（PRD §5.3 / E3：只提示一次）*/
+.banner {
+  margin-top: 14px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: #fff8e1;
+  border: 1px solid #f0d9a0;
+  color: #8a6d1f;
+  font-size: 13px;
+}
+
+.placeholder {
+  margin-top: 18px;
+  padding: 16px 18px;
+  border-radius: 10px;
+  background: var(--brand-soft);
+  border: 1px dashed #f0c9a8;
+  color: #8a5a2b;
+  font-size: 13px;
+}
+
+/* 首页 · 推荐结果（PRD §5 页面 1）*/
+.result {
+  text-align: center;
+  padding: 6px 0 2px;
+}
+
+.result-label {
+  margin: 0;
+  font-size: 13px;
+  color: var(--ink-3);
+}
+
+.result-name {
+  margin: 8px 0 6px;
+  /* 用 clamp：手机上自动变小，不用再写一条媒体查询 */
+  font-size: clamp(30px, 11vw, 42px);
+  font-weight: 700;
+  line-height: 1.25;
+  color: var(--brand);
+  word-break: break-word;
+}
+
+.result-meta {
+  margin: 0;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+/* 大的「换一个」按钮 —— PRD 明确要求"一个大的按钮" */
+.draw-btn {
+  margin-top: 24px;
+  width: 100%;
+  padding: 16px 20px;
+  border: 0;
+  border-radius: 12px;
+  background: var(--brand);
+  color: #fff;
+  font-size: 17px;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.draw-btn:hover {
+  background: #cf4f0a;
+}
+
+.draw-btn:active {
+  transform: translateY(1px);
+}
+
+.result-tip {
+  margin: 12px 0 0;
+  font-size: 13px;
+  color: var(--brand);
+}
+
+.entry-link {
+  margin: 18px 0 0;
+  text-align: center;
+  font-size: 13px;
+}
+
+.entry-link a {
+  color: var(--ink-2);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.entry-link a:hover {
+  color: var(--brand);
+}
+
+/* 空状态引导（F1 / H3）*/
+.empty-state {
+  text-align: center;
+  padding: 6px 0 2px;
+}
+
+.empty-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.empty-text {
+  margin: 8px 0 0;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+.empty-actions {
+  margin-top: 18px;
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+  flex-wrap: wrap;
+}
+
+.btn {
+  display: inline-block;
+  padding: 10px 18px;
+  border-radius: 10px;
+  border: 1px solid var(--brand);
+  background: var(--brand);
+  color: #fff;
+  font-size: 14px;
+  font-family: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.btn.ghost {
+  background: #fff;
+  color: var(--brand);
+}
+
+.btn:hover {
+  opacity: 0.9;
+}
+
+.dim {
+  color: var(--ink-3);
+  font-size: 12px;
+}
+
+/* ── 清单页 / 添加页 / 历史页 共用的小件 ─────────────────────────── */
+
+.count-line {
+  margin-top: 16px;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+.count-line b {
+  color: var(--brand);
+  font-size: 16px;
+}
+
+.center {
+  text-align: center;
+}
+
+.form,
+.item-list,
+.history-list {
+  margin-top: 14px;
+}
+
+.item-list,
+.history-list {
+  list-style: none;
+  padding: 0;
+}
+
+/* 清单里的一行 */
+.item-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.item-row:last-child {
+  border-bottom: 0;
+}
+
+.item-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.item-name {
+  display: block;
+  font-size: 15px;
+  word-break: break-word;
+}
+
+.item-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 5px;
+}
+
+.badge {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: #f4efe8;
+  color: var(--ink-2);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.badge.mine {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+.badge.tag {
+  background: #eef4ea;
+  color: #4d7a3a;
+}
+
+.badge.newest {
+  background: var(--brand-soft);
+  color: var(--brand);
+  margin-right: 6px;
+}
+
+.link-btn {
+  flex: none;
+  border: 0;
+  background: none;
+  padding: 4px 2px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+
+.link-btn.danger:hover {
+  color: #c0392b;
+}
+
+/* 过滤区 —— 视觉上刻意做得轻，因为「默认不生效」*/
+.filter-box {
+  margin-top: 22px;
+  padding: 14px 16px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  background: #fdfbf8;
+}
+
+.filter-head {
+  margin-bottom: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink-2);
+}
+
+/* 表单字段 */
+.field {
+  display: block;
+  margin-top: 14px;
+}
+
+.filter-box .field:first-of-type {
+  margin-top: 0;
+}
+
+.field-label {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.req {
+  margin-left: 4px;
+  font-size: 11.5px;
+  color: #c0392b;
+}
+
+.opt {
+  margin-left: 4px;
+  font-size: 11.5px;
+  color: var(--ink-3);
+}
+
+.counter {
+  float: right;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.counter.over {
+  color: #c0392b;
+  font-weight: 600;
+}
+
+.input,
+.select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  font-size: 15px;
+  font-family: inherit;
+  color: var(--ink);
+}
+
+.input:focus,
+.select:focus {
+  outline: 2px solid var(--brand-soft);
+  border-color: var(--brand);
+}
+
+.tag-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tag-chip,
+.radio-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 11px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  font-size: 13px;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.tag-chip input,
+.radio-chip input {
+  margin: 0;
+  accent-color: var(--brand);
+}
+
+.tag-chip.on,
+.radio-chip.on {
+  background: var(--brand-soft);
+  border-color: var(--brand);
+  color: var(--brand);
+  font-weight: 600;
+}
+
+.inline-add {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.inline-add .input {
+  flex: 1;
+}
+
+.radio-row {
+  display: flex;
+  gap: 8px;
+}
+
+/* 添加页 */
+.form-error {
+  margin: 14px 0 0;
+  padding: 9px 12px;
+  border-radius: 8px;
+  background: #fdecea;
+  color: #a33c30;
+  font-size: 13px;
+}
+
+.form-saved {
+  margin-top: 16px;
+  padding: 14px;
+  border-radius: 10px;
+  background: var(--brand-soft);
+  border: 1px solid #f0c9a8;
+  font-size: 14px;
+}
+
+.form-saved p {
+  margin: 0 0 10px;
+}
+
+.btn.wide,
+.btn.ghost.wide {
+  display: block;
+  width: 100%;
+  text-align: center;
+  margin-top: 14px;
+}
+
+/* 历史记录 */
+.history-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.history-row:last-child {
+  border-bottom: 0;
+}
+
+.history-name {
+  font-size: 15px;
+  word-break: break-word;
+}
+
+.history-time {
+  flex: none;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.placeholder strong {
+  color: var(--brand);
+}
+
+.tag {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: #fff;
+  border: 1px solid #f0c9a8;
+  color: #8a5a2b;
+  font-size: 11.5px;
+}
+
+.placeholder-text {
+  margin: 8px 0 0;
+  line-height: 1.7;
+}
+
+.steps {
+  margin: 10px 0 0;
+  padding-left: 20px;
+}
+
+.steps li {
+  margin: 2px 0;
+}
+
+.footer {
+  margin: 18px 0 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+/* 手机竖屏（375px）*/
+@media (max-width: 430px) {
+  .app {
+    padding: 0 12px 32px;
+  }
+
+  .topbar {
+    gap: 8px;
+    padding: 12px 0 10px;
+  }
+
+  .brand {
+    font-size: 17px;
+  }
+
+  .brand-sub {
+    display: none;
+  }
+
+  .nav {
+    width: 100%;
+    margin-left: 0;
+    gap: 2px;
+  }
+
+  .nav-item {
+    padding: 6px 8px;
+    font-size: 12.5px;
+  }
+
+  .panel {
+    padding: 18px 16px;
+  }
+
+  .panel h1 {
+    font-size: 18px;
+  }
+}

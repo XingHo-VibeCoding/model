@@ -5,6 +5,8 @@
 
 # 依赖包体积大、网上能重新装，不需要上传
 node_modules/
+# 构建产物：由 npm run build 生成，同样不需要上传
+dist/
 
 # 系统和编辑器自动生成的垃圾文件
 .DS_Store
