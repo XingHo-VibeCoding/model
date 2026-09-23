@@ -33,8 +33,11 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* 桌面放宽到 1080px —— 首页要「桌面多栏并排」，720px 排不下。
+   但内容不是全部跟着变宽：.panel 自己收窄到 760px（下面），
+   只有首页用 .panel-wide 撑满。这样清单页/添加页仍然是一行好读的宽度。 */
 .app {
-  max-width: 720px;
+  max-width: 1080px;
   margin: 0 auto;
   padding: 0 16px 40px;
 }
@@ -98,10 +101,18 @@ body {
 }
 
 .panel {
+  max-width: 760px; /* 长文本页（清单 / 添加 / 历史）保持一行能扫完的宽度 */
+  margin-left: auto;
+  margin-right: auto;
   background: var(--card);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 22px 20px;
+}
+
+/* 首页撑满容器 —— 它要摆卡片网格，越宽栏数越多 */
+.panel-wide {
+  max-width: none;
 }
 
 .panel h1 {
@@ -616,5 +627,398 @@ body {
 
   .panel h1 {
     font-size: 18px;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════
+   Day 8 · 首页改版
+   页头 / 主推荐卡 / 两行平级维度 / 卡片网格 / 四种页面状态 / 骨架屏
+
+   视觉要求（Day 8 清单）：信息层级清楚、卡片可扫描、
+   桌面多栏并排、手机宽度纵向堆叠且不横向溢出（PRD F2）。
+   ══════════════════════════════════════════════════════════════════ */
+
+/* ── 页头：标题 + 副标题 + 「清单更新于」──────────────────────────── */
+
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.page-header-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* ⚠️ 必须带上 .page-header 前缀：
+   上面那条 `.panel h1`（特异性 0,1,1）会盖掉单写的 `.page-title`（0,1,0）。
+   这里用两个类的组合（0,2,0）把优先级提回来。 */
+.page-header .page-title {
+  margin: 0;
+  font-size: clamp(21px, 5vw, 26px);
+  font-weight: 700;
+  line-height: 1.3;
+  letter-spacing: 0.2px;
+}
+
+.page-sub {
+  margin: 6px 0 0;
+  font-size: 13.5px;
+  color: var(--ink-2);
+}
+
+.page-updated {
+  margin: 10px 0 0;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.page-updated-label {
+  margin-right: 3px;
+}
+
+.page-header-side {
+  flex: none;
+  padding-top: 2px;
+}
+
+/* 小号的幽灵按钮（页头右侧那个入口）*/
+.btn.small {
+  padding: 7px 13px;
+  border-radius: 9px;
+  font-size: 13px;
+}
+
+/* ── 主推荐区：一张 hero 卡片，打开就有一个具体结果（PRD A1 / A3）── */
+
+.hero-block {
+  margin-top: 20px;
+}
+
+.section-label {
+  margin: 0 0 8px;
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.6px;
+  color: var(--ink-3);
+}
+
+/* ── 浏览区：两行**平级**维度 + 卡片网格 ──────────────────────────── */
+
+.browse-block {
+  margin-top: 26px;
+}
+
+/* 两行用同一个容器、同一套结构 —— 「类别」和「平台」是平级的，
+   所以它们看起来必须长得一样（不是一个包着另一个）。 */
+.axis-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fdfbf8;
+}
+
+.axis-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* 两行标签**等宽**，于是「类别」「平台」在视觉上左对齐成一列 ——
+   这个等宽就是为了让"两个平级维度"这件事一眼看得出来。 */
+.axis-label {
+  flex: none;
+  width: 40px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.axis-opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.axis-opt {
+  padding: 5px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--ink-2);
+  cursor: pointer;
+}
+
+.axis-opt:hover {
+  border-color: #e6c9ae;
+  color: var(--brand);
+}
+
+.axis-opt:focus-visible {
+  outline: 2px solid var(--brand-soft);
+  outline-offset: 1px;
+}
+
+.axis-opt.is-on {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+  font-weight: 600;
+}
+
+/* 「演示数据」标注 —— 有了这句，就不用去改 PRD §7.2「不接真实平台数据」 */
+.demo-note {
+  margin: 16px 0 0;
+  padding-top: 12px;
+  border-top: 1px dashed var(--line);
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--ink-3);
+}
+
+/* 网格为空时的提示（换个类别/平台看看）*/
+.browse-block .hint {
+  margin-top: 14px;
+  padding: 16px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  background: #fff;
+  text-align: center;
+}
+
+/* ── 卡片网格 ───────────────────────────────────────────────────────
+   auto-fill + minmax：桌面自动排 4~5 栏，宽度不够时栏数自己减少。
+   窄屏另外用一条媒体查询显式写成单列（见文件末尾），
+   这样"手机纵向堆叠"是写死的，不会因为将来改 minmax 而失效。 */
+
+.card-grid,
+.skeleton-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+/* ⚠️ 防横向溢出的第 1 条（PRD F2：375px 下不得出现横向滚动条）：
+   网格子项默认 min-width:auto，长内容会把格子撑破 —— 必须显式归零。 */
+.card-grid > * {
+  min-width: 0;
+}
+
+/* ── 一张卡片 = 一个条目（店 / 菜）───────────────────────────────── */
+
+.food-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0; /* 防横向溢出的第 2 条：卡片自己也要能被压缩 */
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--card);
+}
+
+.food-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.food-card-name {
+  margin: 0;
+  min-width: 0;
+  font-size: 15.5px;
+  font-weight: 600;
+  line-height: 1.4;
+  /* 防横向溢出的第 3 条：名称是最可能超长的地方
+     （含 emoji 或 <script> 这类字符时尤其明显 —— PRD D5 要求它原样显示且不破版）*/
+  overflow-wrap: anywhere;
+}
+
+/* 平台标记 —— 它不是装饰，它回答「去哪个 App 搜这家店」（鼠标悬停有提示）*/
+.food-card-platform {
+  flex: none;
+  padding: 2px 8px;
+  border: 1px solid #f0c9a8;
+  border-radius: 999px;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 11.5px;
+  white-space: nowrap;
+  cursor: help;
+}
+
+/* 没标平台的（用户自己加的）—— 视觉上退一步，对用户诚实 */
+.food-card-platform.muted {
+  background: #f4efe8;
+  border-color: var(--line);
+  color: var(--ink-3);
+}
+
+.food-card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.food-card-foot {
+  margin-top: 2px;
+}
+
+/* 主推荐卡（variant="hero"）—— 整页最突出的一块 */
+.food-card.hero {
+  gap: 12px;
+  padding: 20px 18px;
+  border-color: #f0c9a8;
+  background: var(--brand-soft);
+}
+
+.food-card.hero .food-card-name {
+  font-size: clamp(26px, 8vw, 36px);
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: 0.3px;
+  color: var(--brand);
+}
+
+.food-card.hero .food-card-platform {
+  background: #fff;
+  font-size: 12.5px;
+}
+
+.food-card.hero .badge {
+  background: #fff;
+}
+
+/* hero 里那个大的「换一个」按钮（.draw-btn 自带 width:100% 和品牌色）*/
+.food-card.hero .draw-btn {
+  margin-top: 4px;
+}
+
+/* ── 四种页面状态的外壳 ──────────────────────────────────────────── */
+
+.view-state {
+  margin-top: 20px;
+  padding: 22px 20px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  background: #fdfbf8;
+  text-align: center;
+}
+
+.state-title {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 600;
+}
+
+.state-text {
+  margin: 8px 0 0;
+  font-size: 14px;
+  color: var(--ink-2);
+}
+
+.state-actions {
+  margin-top: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+}
+
+/* ── 骨架屏（加载状态用）───────────────────────────────────────────
+   先把位置占住，内容出现时页面不会跳。 */
+
+.skeleton-card {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.skeleton-line {
+  display: block;
+  height: 11px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #f1e9e0 25%, #f8f2ea 37%, #f1e9e0 63%);
+  background-size: 400% 100%;
+  animation: skeleton-shine 1.3s ease-in-out infinite;
+}
+
+.skeleton-line.w60 {
+  width: 60%;
+}
+
+.skeleton-line.w40 {
+  width: 40%;
+}
+
+.skeleton-line.w80 {
+  width: 80%;
+}
+
+@keyframes skeleton-shine {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: 0 0;
+  }
+}
+
+/* 系统里开了「减少动态效果」就不闪 —— 无障碍的常规做法 */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton-line {
+    animation: none;
+  }
+}
+
+/* ── 窄屏（含 375px）：一律堆成一列 ─────────────────────────────── */
+
+@media (max-width: 600px) {
+  /* 显式写成单列，不依赖 auto-fill 自己算 —— "手机纵向堆叠"是硬要求 */
+  .card-grid,
+  .skeleton-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .page-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .page-header-side {
+    padding-top: 0;
+  }
+
+  .page-header-side .btn {
+    display: block;
+    width: 100%;
+    text-align: center;
+  }
+
+  .axis-label {
+    width: 36px;
+  }
+
+  .food-card.hero {
+    padding: 18px 16px;
   }
 }

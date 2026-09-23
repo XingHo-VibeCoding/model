@@ -4,6 +4,7 @@ import {
   appendHistory,
   getFilter,
   getHistory,
+  getMeta,
   getStorageStatus,
   loadItems,
   removeItem,
@@ -12,7 +13,7 @@ import {
 } from './lib/storage.js'
 import { applyFilter, collectTags } from './lib/filter.js'
 import { drawNext } from './lib/bag.js'
-import { SPICY_ANY, TAG_PRESETS } from './lib/constants.js'
+import { SPICY_ANY, TAG_PRESETS, VIEW_STATE } from './lib/constants.js'
 import Home from './pages/Home.jsx'
 import List from './pages/List.jsx'
 import Add from './pages/Add.jsx'
@@ -32,11 +33,24 @@ function readHash() {
   return PAGES.some((p) => p.hash === hash) ? hash : '#/'
 }
 
+/* 人工触发 loading / error 的开关（地址栏加 ?state=loading 或 ?state=error）。
+
+   为什么要留这个开关：数据全部来自 localStorage，是同步读取、不联网的 ——
+   这两种状态**本来就遇不到**。它们是给第 3 周接真实 API 预留的位置，
+   真到那天，它们会自己出现；在那之前，只能这样手动把它们调出来看一眼，
+   免得放几个月没人管、接上 API 那天才发现样式全不对。 */
+function readForcedState() {
+  if (typeof window === 'undefined') return null
+  const s = new URLSearchParams(window.location.search).get('state')
+  return s === VIEW_STATE.loading || s === VIEW_STATE.error ? s : null
+}
+
 export default function App() {
   const [hash, setHash] = useState(readHash)
   const [items, setItems] = useState([])
   const [filter, setFilterState] = useState({ spicyMax: SPICY_ANY, excludeTags: [] })
   const [history, setHistory] = useState([])
+  const [updatedAt, setUpdatedAt] = useState(null)
   const [rec, setRec] = useState({ status: 'idle', item: null, candidateCount: 0, itemCount: 0 })
   const [storageIssue, setStorageIssue] = useState(false)
 
@@ -51,6 +65,7 @@ export default function App() {
     setItems(loadItems())
     setFilterState(getFilter())
     setHistory(getHistory())
+    setUpdatedAt(getMeta().updatedAt)
   }, [])
 
   useEffect(() => {
@@ -64,13 +79,18 @@ export default function App() {
     if (getStorageStatus().notify) setStorageIssue(true)
   }, [sync])
 
+  /* 当前候选 = 全部条目过一遍辣度上限与忌口标签。
+     ⚠️ 注意：首页那两行「类别 / 平台」筛选**不在这里** —— 它们是浏览用的展示筛选，
+        不进抽签池。所以改它们不会影响抽签结果，PRD §5.2 的洗牌袋一个字不用改。 */
+  const candidates = useMemo(() => applyFilter(items, filter), [items, filter])
+
   /* 抽一个结果。顺序严格按 PRD §5.2：算候选 → 装袋/取袋 → 写历史。 */
   const draw = useCallback(() => {
     const all = loadItems()
-    const candidates = applyFilter(all, getFilter())
+    const pool = applyFilter(all, getFilter())
 
     // 候选为 0 → 不抽取，只给提示；绝不回退到被过滤掉的条目（H3）
-    if (candidates.length === 0) {
+    if (pool.length === 0) {
       bagRef.current = null
       setRec({ status: 'empty', item: null, candidateCount: 0, itemCount: all.length })
       return
@@ -78,18 +98,16 @@ export default function App() {
 
     // 「上一次结果」= 历史记录里最新的一条（含刷新前产生的），靠 itemId 传递
     const lastResultId = getHistory()[0]?.itemId ?? null
-    const { id, bag } = drawNext(bagRef.current, candidates, lastResultId)
+    const { id, bag } = drawNext(bagRef.current, pool, lastResultId)
     bagRef.current = bag
 
-    const item = candidates.find((c) => c.id === id)
+    const item = pool.find((c) => c.id === id)
     if (!item) return
 
     appendHistory(item) // 取出的结果写入历史记录
-    setRec({ status: 'ok', item, candidateCount: candidates.length, itemCount: all.length })
-    setItems(all)
-    setFilterState(getFilter())
-    setHistory(getHistory())
-  }, [])
+    setRec({ status: 'ok', item, candidateCount: pool.length, itemCount: all.length })
+    sync()
+  }, [sync])
 
   /* 每次「进入首页」都重新抽一次。
      为什么不是"只在刷新时抽一次"：
@@ -154,11 +172,34 @@ export default function App() {
     [items],
   )
 
+  /* 首页要显示的四种状态。
+     forced（地址栏参数）优先；否则按真实数据判断 ——
+     能自然发生的只有 success 和 empty 两种。 */
+  const viewState = useMemo(() => {
+    const forced = readForcedState()
+    if (forced) return forced
+    return rec.status === 'empty' ? VIEW_STATE.empty : VIEW_STATE.success
+  }, [rec.status])
+
   const page = PAGES.find((p) => p.hash === hash) ?? PAGES[0]
 
   let content
   if (page.hash === '#/') {
-    content = <Home rec={rec} onDraw={draw} onRestore={handleRestoreHome} />
+    // 首帧 rec 还是 idle（抽取在 effect 里跑，差一帧）。这里直接不渲染，
+    // 而不是把它当成「加载中」—— 那会让「loading 在本期触发不到」这句话变成假的。
+    content =
+      rec.status === 'idle' ? null : (
+        <Home
+          rec={rec}
+          viewState={viewState}
+          candidates={candidates}
+          filter={filter}
+          updatedAt={updatedAt}
+          onDraw={draw}
+          onRestore={handleRestoreHome}
+          onFilterChange={handleFilterChange}
+        />
+      )
   } else if (page.hash === '#/list') {
     content = (
       <List
@@ -200,7 +241,8 @@ export default function App() {
       )}
 
       <main className="main">
-        <section className="panel">
+        {/* 首页要摆卡片网格，撑满容器才排得下多栏；其余三页保持 760px 的好读宽度 */}
+        <section className={page.hash === '#/' ? 'panel panel-wide' : 'panel'}>
           {page.hash !== '#/' && (
             <>
               <h1>{page.title}</h1>

@@ -11,10 +11,15 @@ import menu from '../data/menu.json'
 import {
   HISTORY_LIMIT,
   NAME_MAX,
+  PLATFORM_FILTER_ALL,
+  PLATFORM_FILTER_OPTIONS,
+  PLATFORMS,
   SCHEMA_VERSION,
   SPICY_ANY,
   SPICY_LEVELS,
   STORAGE_KEYS,
+  TYPE_FILTER_ALL,
+  TYPE_FILTER_OPTIONS,
 } from './constants.js'
 
 /* ── 内部状态 ─────────────────────────────────────────────────────── */
@@ -28,7 +33,7 @@ function emptyState() {
     items: [],
     filter: { spicyMax: SPICY_ANY, excludeTags: [] },
     history: [],
-    meta: { schemaVersion: SCHEMA_VERSION, seededBuiltin: false },
+    meta: { schemaVersion: SCHEMA_VERSION, seededBuiltin: false, updatedAt: null },
   }
 }
 
@@ -103,21 +108,59 @@ function writeRaw(name, value) {
 
 /* ── 首次运行：播种内置库 ─────────────────────────────────────────── */
 
+/* 数据迁移：SCHEMA_VERSION 对不上时，重播一次内置库。
+
+   为什么非做不可：Day 7 已经在浏览器里播过 v1 的内置库，而那一版 15 家"店"里有
+   12 家是搜不到的虚构名字（「校门口的麻辣烫」「一楼食堂」…）。不做迁移的话，
+   刷新后看到的还是旧数据，新的 50 条永远进不来 —— 而且「恢复默认库」也救不了，
+   因为它是"补缺"，会把新旧两套名字一起塞进清单。
+
+   只替换 source === 'builtin' 的条目，**用户自己加的条目一条都不动**。
+   迁移完把版本号写成当前值，所以它只跑一次 ——
+   之后把清单删空再刷新，仍然不会自动补回来（PRD 的 F1 / H3 要靠这个状态）。 */
+function migrateIfNeeded(meta) {
+  if (meta?.schemaVersion === SCHEMA_VERSION) return false
+  const items = readRaw('items')
+  const list = Array.isArray(items) ? items : []
+  const kept = list.filter((it) => it?.source !== 'builtin')
+  writeRaw('items', [...kept, ...builtinItems()])
+  return true
+}
+
 /* 只在「从未初始化过」时播种一次。
    用户把清单删空后刷新，不会自动补回来 —— 因为 PRD 的 F1 和 H3
    都需要「候选为空」这个状态能够被构造出来。想恢复，用「恢复默认库」。 */
 function ensureReady() {
   available()
   const meta = readRaw('meta')
-  if (meta && meta.seededBuiltin === true) return
+  if (meta && meta.seededBuiltin === true) {
+    // 播过种了 —— 但版本对不上（比如今天从 v1 升到 v2）就先迁移
+    if (migrateIfNeeded(meta)) {
+      writeRaw('meta', {
+        schemaVersion: SCHEMA_VERSION,
+        seededBuiltin: true,
+        updatedAt: Date.now(),
+      })
+    }
+    return
+  }
 
   const items = readRaw('items')
   if (!Array.isArray(items) || items.length === 0) {
     writeRaw('items', builtinItems())
   }
-  writeRaw('filter', { spicyMax: SPICY_ANY, excludeTags: [] })
+  writeRaw('filter', {
+    spicyMax: SPICY_ANY,
+    excludeTags: [],
+    platformFilter: PLATFORM_FILTER_ALL,
+    typeFilter: TYPE_FILTER_ALL,
+  })
   writeRaw('history', [])
-  writeRaw('meta', { schemaVersion: SCHEMA_VERSION, seededBuiltin: true })
+  writeRaw('meta', {
+    schemaVersion: SCHEMA_VERSION,
+    seededBuiltin: true,
+    updatedAt: Date.now(),
+  })
 }
 
 /* ── 小工具 ───────────────────────────────────────────────────────── */
@@ -171,13 +214,16 @@ export function addItem(input = {}) {
     id: makeId('u'),
     name,
     type,
-    // 不填就是「不限」→ 这类条目永远不会被过滤掉（PRD §5.1）
+    /* 不填就是「不限」→ 这类条目永远不会被过滤掉（PRD §5.1）。
+       平台同理：用户没说他在哪个平台点，就不该因为平台筛选被排除。 */
+    platform: PLATFORMS.includes(input.platform) ? input.platform : 'any',
     spicy: SPICY_LEVELS.includes(input.spicy) ? input.spicy : SPICY_ANY,
     tags,
     source: 'user',
   }
 
   writeRaw('items', [...items, item])
+  touchUpdatedAt()
   return { ok: true, item }
 }
 
@@ -188,6 +234,7 @@ export function removeItem(id) {
   const next = items.filter((it) => it.id !== id)
   if (next.length === items.length) return false
   writeRaw('items', next)
+  touchUpdatedAt()
   return true
 }
 
@@ -197,19 +244,42 @@ export function restoreBuiltin() {
   const items = loadItems()
   const existing = new Set(items.map((it) => normalizeName(it.name)))
   const additions = builtinItems().filter((b) => !existing.has(normalizeName(b.name)))
-  if (additions.length) writeRaw('items', [...items, ...additions])
+  if (additions.length) {
+    writeRaw('items', [...items, ...additions])
+    touchUpdatedAt()
+  }
   return additions.length
 }
 
 /* ── 过滤条件 ─────────────────────────────────────────────────────── */
 
+/* 过滤条件现在有四个字段，分成**两组平级的维度**：
+   · 辣度上限 + 忌口标签  → 老的那组（PRD §5 页面 2）
+   · 平台筛选 + 类别筛选  → Day 8 新增。爸爸拍板：**类别与平台平级**，
+     所以这两个字段的形态、默认值、校验方式完全对称。
+
+   两个新字段的默认值都是 'all'（全部 = 这一维不筛），
+   这样"全新状态"下四个维度全部不生效，守住 PRD 的 H1 和 A1。 */
+function defaultFilter() {
+  return {
+    spicyMax: SPICY_ANY,
+    excludeTags: [],
+    platformFilter: PLATFORM_FILTER_ALL,
+    typeFilter: TYPE_FILTER_ALL,
+  }
+}
+
 export function getFilter() {
   ensureReady()
   const f = readRaw('filter')
-  if (!f || typeof f !== 'object') return { spicyMax: SPICY_ANY, excludeTags: [] }
+  if (!f || typeof f !== 'object') return defaultFilter()
   return {
     spicyMax: SPICY_LEVELS.includes(f.spicyMax) ? f.spicyMax : SPICY_ANY,
     excludeTags: Array.isArray(f.excludeTags) ? f.excludeTags : [],
+    platformFilter: PLATFORM_FILTER_OPTIONS.includes(f.platformFilter)
+      ? f.platformFilter
+      : PLATFORM_FILTER_ALL,
+    typeFilter: TYPE_FILTER_OPTIONS.includes(f.typeFilter) ? f.typeFilter : TYPE_FILTER_ALL,
   }
 }
 
@@ -247,6 +317,34 @@ export function getHistory() {
   ensureReady()
   const list = readRaw('history')
   return Array.isArray(list) ? list : []
+}
+
+/* ── 元信息 · 更新时间 ────────────────────────────────────────────── */
+
+/* 「更新时间」= **清单最后一次被改动的时刻**。
+   算的只有三件事：加条目、删条目、恢复默认库。
+   改过滤条件**不算** —— 过滤条件不是清单内容，页面上的文案写的是「清单更新于」。
+
+   为什么要有它：Day 8 要求首页顶部显示一行"更新于 …"，
+   而 PRD 与 Day 5 的数据模型里原本都没有这个字段。 */
+export function getMeta() {
+  ensureReady()
+  const m = readRaw('meta')
+  return {
+    schemaVersion: m?.schemaVersion ?? SCHEMA_VERSION,
+    seededBuiltin: m?.seededBuiltin === true,
+    updatedAt: typeof m?.updatedAt === 'number' ? m.updatedAt : null,
+  }
+}
+
+export function getUpdatedAt() {
+  return getMeta().updatedAt
+}
+
+/* 任何改动了清单内容的操作，做完都要调它。
+   （不写进 ensureReady 里，免得每次读都刷新时间——那这个值就没意义了。） */
+function touchUpdatedAt() {
+  writeRaw('meta', { ...getMeta(), updatedAt: Date.now() })
 }
 
 /* ── 存储状态与统计 ───────────────────────────────────────────────── */
