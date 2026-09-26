@@ -644,13 +644,15 @@ body {
   margin-top: 20px;
 }
 
-.section-label {
-  margin: 0 0 8px;
-  font-size: 12.5px;
-  font-weight: 600;
-  letter-spacing: 0.6px;
-  color: var(--ink-3);
+/* Day 10：「加上我常吃的」从页头挪到推荐结果后面。
+   它是次要入口 —— 用小号按钮 + 居中，不再占满整行抢戏。 */
+.hero-action {
+  margin-top: 12px;
+  text-align: center;
 }
+
+/* Day 10：原来这里有一个 .section-label（hero 上方的「今天就吃这家」小标签），
+   那句话已经提到页头当主标题，没人再用它了，所以删掉 —— 不留死样式。 */
 
 /* ── 浏览区：两行**平级**维度 + 卡片网格 ──────────────────────────── */
 
