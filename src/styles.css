@@ -4,9 +4,16 @@
 :root {
   --brand: #e8590c;
   --brand-soft: #fff1e6;
+  /* 品牌橙按用途拆成三个角色。原因：#e8590c 本身太亮（相对亮度 0.32），
+     直接在上面放白字、或拿它当小字用，对比度都过不了 WCAG 的 4.5:1。
+       --brand      大字（≥18.66px 粗体 / ≥24px）与边框、焦点色
+       --brand-lift 按钮底色：浅一档，配深色文字可达 5.2:1
+       --brand-ink  当小字文字用：深一档，在浅底上可达 4.7:1 */
+  --brand-lift: #f0762a;
+  --brand-ink: #bd4508;
   --ink: #2b2620;
-  --ink-2: #6b6157;
-  --ink-3: #9a9088;
+  --ink-2: #5f564c;
+  --ink-3: #6b6157;
   --line: #ece3d9;
   --bg: #fffaf5;
   --card: #ffffff;
@@ -15,6 +22,17 @@
 
 * {
   box-sizing: border-box;
+}
+
+/* 键盘焦点环 —— 全局一条，覆盖所有可交互元素；以后新增控件也自动带上。
+   两个关键选择：
+   ① 用 :focus-visible 而不是 :focus —— 鼠标点击不显示环，只有键盘（Tab）操作才显示，
+      所以视觉上完全不影响鼠标用户。
+   ② 颜色用 --brand-ink：在浅底上 5.04:1。原来是 --brand-soft（浅橙 #fff1e6），
+      在浅底上只有 1.1:1 —— 等于没写。WCAG 2.4.11 要求焦点指示器 ≥3:1。 */
+:focus-visible {
+  outline: 3px solid var(--brand-ink);
+  outline-offset: 2px;
 }
 
 html,
@@ -28,7 +46,7 @@ body {
   background: var(--bg);
   color: var(--ink);
   font-family: system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.65;
   -webkit-font-smoothing: antialiased;
 }
@@ -70,13 +88,16 @@ body {
 
 .nav {
   display: flex;
-  gap: 4px;
+  gap: 8px;        /* 触控目标间距 ≥8px（ux-23）*/
   margin-left: auto;
   flex-wrap: wrap;
 }
 
 .nav-item {
-  padding: 6px 10px;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;   /* 触控目标 ≥44px（ux-22）*/
+  padding: 0 12px;
   border-radius: 8px;
   font-size: 13px;
   color: var(--ink-2);
@@ -86,12 +107,12 @@ body {
 
 .nav-item:hover {
   background: var(--brand-soft);
-  color: var(--brand);
+  color: var(--brand-ink);
 }
 
 .nav-item.active {
   background: var(--brand-soft);
-  color: var(--brand);
+  color: var(--brand-ink);
   font-weight: 600;
 }
 
@@ -145,8 +166,8 @@ body {
   padding: 16px 20px;
   border: 0;
   border-radius: 12px;
-  background: var(--brand);
-  color: #fff;
+  background: var(--brand-lift);
+  color: var(--ink);
   font-size: 17px;
   font-weight: 600;
   font-family: inherit;
@@ -164,7 +185,7 @@ body {
 .result-tip {
   margin: 12px 0 0;
   font-size: 13px;
-  color: var(--brand);
+  color: var(--brand-ink);
 }
 
 .entry-link {
@@ -174,13 +195,17 @@ body {
 }
 
 .entry-link a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;   /* 触控目标 ≥44px */
+  padding: 0 10px;
   color: var(--ink-2);
   text-decoration: underline;
   text-underline-offset: 3px;
 }
 
 .entry-link a:hover {
-  color: var(--brand);
+  color: var(--brand-ink);
 }
 
 /* 空状态引导（F1 / H3）*/
@@ -198,7 +223,7 @@ body {
 
 .empty-text {
   margin: 8px 0 0;
-  font-size: 14px;
+  font-size: 16px;
   color: var(--ink-2);
 }
 
@@ -214,9 +239,9 @@ body {
   display: inline-block;
   padding: 10px 18px;
   border-radius: 10px;
-  border: 1px solid var(--brand);
-  background: var(--brand);
-  color: #fff;
+  border: 1px solid var(--brand-lift);
+  background: var(--brand-lift);
+  color: var(--ink);
   font-size: 14px;
   font-family: inherit;
   text-decoration: none;
@@ -225,7 +250,7 @@ body {
 
 .btn.ghost {
   background: #fff;
-  color: var(--brand);
+  color: var(--brand-ink);
 }
 
 .btn:hover {
@@ -246,7 +271,7 @@ body {
 }
 
 .count-line b {
-  color: var(--brand);
+  color: var(--brand-ink);
   font-size: 16px;
 }
 
@@ -286,7 +311,7 @@ body {
 
 .item-name {
   display: block;
-  font-size: 15px;
+  font-size: 16px;
   word-break: break-word;
 }
 
@@ -303,13 +328,13 @@ body {
   border-radius: 999px;
   background: #f4efe8;
   color: var(--ink-2);
-  font-size: 11.5px;
+  font-size: 12px;
   white-space: nowrap;
 }
 
 .badge.mine {
   background: var(--brand-soft);
-  color: var(--brand);
+  color: var(--brand-ink);
 }
 
 .badge.tag {
@@ -319,15 +344,18 @@ body {
 
 .badge.newest {
   background: var(--brand-soft);
-  color: var(--brand);
+  color: var(--brand-ink);
   margin-right: 6px;
 }
 
 .link-btn {
   flex: none;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;   /* 「删除」不可逆，更要能点准 */
   border: 0;
   background: none;
-  padding: 4px 2px;
+  padding: 0 8px;
   font-size: 13px;
   font-family: inherit;
   color: var(--ink-3);
@@ -373,13 +401,13 @@ body {
 
 .req {
   margin-left: 4px;
-  font-size: 11.5px;
+  font-size: 12px;
   color: #c0392b;
 }
 
 .opt {
   margin-left: 4px;
-  font-size: 11.5px;
+  font-size: 12px;
   color: var(--ink-3);
 }
 
@@ -401,29 +429,31 @@ body {
   border: 1px solid var(--line);
   border-radius: 10px;
   background: #fff;
-  font-size: 15px;
+  font-size: 16px;
   font-family: inherit;
   color: var(--ink);
 }
 
+/* 输入框用 :focus 而不是 :focus-visible —— 光标在哪个框里需要一直看得见 */
 .input:focus,
 .select:focus {
-  outline: 2px solid var(--brand-soft);
+  outline: 3px solid var(--brand-ink);
   border-color: var(--brand);
 }
 
 .tag-grid {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;        /* 触控目标间距 ≥8px */
 }
 
 .tag-chip,
 .radio-chip {
   display: inline-flex;
   align-items: center;
+  min-height: 44px;   /* 触控目标 ≥44px */
   gap: 5px;
-  padding: 6px 11px;
+  padding: 0 12px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: #fff;
@@ -442,7 +472,7 @@ body {
 .radio-chip.on {
   background: var(--brand-soft);
   border-color: var(--brand);
-  color: var(--brand);
+  color: var(--brand-ink);
   font-weight: 600;
 }
 
@@ -507,7 +537,7 @@ body {
 }
 
 .history-name {
-  font-size: 15px;
+  font-size: 16px;
   word-break: break-word;
 }
 
@@ -525,7 +555,7 @@ body {
   background: #fff;
   border: 1px solid #f0c9a8;
   color: #8a5a2b;
-  font-size: 11.5px;
+  font-size: 12px;
 }
 
 .footer {
@@ -557,12 +587,12 @@ body {
   .nav {
     width: 100%;
     margin-left: 0;
-    gap: 2px;
+    gap: 8px;
   }
 
   .nav-item {
     padding: 6px 8px;
-    font-size: 12.5px;
+    font-size: 13px;
   }
 
   .panel {
@@ -612,7 +642,7 @@ body {
 
 .page-sub {
   margin: 6px 0 0;
-  font-size: 13.5px;
+  font-size: 14px;
   color: var(--ink-2);
 }
 
@@ -633,7 +663,10 @@ body {
 
 /* 小号的幽灵按钮（页头右侧那个入口）*/
 .btn.small {
-  padding: 7px 13px;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;   /* 触控目标 ≥44px */
+  padding: 0 13px;
   border-radius: 9px;
   font-size: 13px;
 }
@@ -691,12 +724,15 @@ body {
 .axis-opts {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;        /* 触控目标间距 ≥8px */
   min-width: 0;
 }
 
 .axis-opt {
-  padding: 5px 12px;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;   /* 首页最高频的交互，一共 11 个 */
+  padding: 0 12px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: #fff;
@@ -708,18 +744,13 @@ body {
 
 .axis-opt:hover {
   border-color: #e6c9ae;
-  color: var(--brand);
-}
-
-.axis-opt:focus-visible {
-  outline: 2px solid var(--brand-soft);
-  outline-offset: 1px;
+  color: var(--brand-ink);
 }
 
 .axis-opt.is-on {
-  background: var(--brand);
-  border-color: var(--brand);
-  color: #fff;
+  background: var(--brand-lift);
+  border-color: var(--brand-lift);
+  color: var(--ink);
   font-weight: 600;
 }
 
@@ -786,7 +817,7 @@ body {
 .food-card-name {
   margin: 0;
   min-width: 0;
-  font-size: 15.5px;
+  font-size: 16px;
   font-weight: 600;
   line-height: 1.4;
   /* 防横向溢出的第 3 条：名称是最可能超长的地方
@@ -801,8 +832,8 @@ body {
   border: 1px solid #f0c9a8;
   border-radius: 999px;
   background: var(--brand-soft);
-  color: var(--brand);
-  font-size: 11.5px;
+  color: var(--brand-ink);
+  font-size: 12px;
   white-space: nowrap;
   cursor: help;
 }
@@ -842,7 +873,7 @@ body {
 
 .food-card.hero .food-card-platform {
   background: #fff;
-  font-size: 12.5px;
+  font-size: 13px;
 }
 
 .food-card.hero .badge {
@@ -873,7 +904,7 @@ body {
 
 .state-text {
   margin: 8px 0 0;
-  font-size: 14px;
+  font-size: 16px;
   color: var(--ink-2);
 }
 
