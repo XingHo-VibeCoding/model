@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   PLATFORM_FILTER_ALL,
   PLATFORM_FILTER_LABEL,
@@ -82,6 +82,61 @@ export default function Home({
     return [...shown].sort((a, b) => distance(a) - distance(b))
   }, [candidates, platformFilter, typeFilter, filter?.spicyMax])
 
+  /* ── 一次「换一个」的反馈（Day 11）──────────────────────────────────
+     三种状态在这里翻译成人能看懂的样子：
+       loading → 按钮上写「加载中…」并标成不可用（不再补一句，避免重复）
+       ok      → 「切换成功」，2.5 秒后自己淡出（**只在用户自己点的那一次出现** ——
+                 首次自动抽取也是 ok，但那时用户什么都没做，弹提示会莫名其妙）
+       error   → 失败原因 + 按钮变成「重试」，**不自动消失**
+                 （它是"待处理"，用户要看着原因决定要不要重试）                */
+  const isSwapping = rec.status === 'loading'
+
+  /* 「切换成功」是**一瞬间的确认**，所以要自己收起来（Day 11 · 复盘修正）。
+
+     原来的写法是"显示到下次点击为止，永不自动消失" —— 理由是截图不会错过。
+     但爸爸一句话点破了代价：按过一次之后它就**一直挂在那儿**，
+     再看到的人已经想不起"我刚才干了什么"，于是它不再像"刚刚生效了"，
+     而像贴在卡片上的一个标签。确认类反馈必须是**短暂**的。
+
+     ⚠️ 只有成功会收；**失败不收** —— 失败是"待处理"状态，
+        用户要看着原因决定要不要「重试」，那行字就是操作的一部分。
+     ⚠️ 淡出后**保留占位**（不做 display:none / 不卸载）：
+        否则它下面那句「加上我常吃的」会往上一跳 —— 而"布局别跳"是硬要求。 */
+  const OK_HIDE_MS = 2500
+  const [okFading, setOkFading] = useState(false)
+
+  const feedback = useMemo(() => {
+    if (rec.status === 'error') {
+      return { kind: 'err', text: rec.error ?? '切换失败，请再试一次。' }
+    }
+    if (rec.status === 'ok' && rec.viaUser) {
+      return { kind: 'ok', text: '切换成功' }
+    }
+    return null
+  }, [rec.status, rec.error, rec.viaUser])
+
+  /* 每次"用户点出来的成功"都重新计时：先恢复可见，再 2.5 秒后淡出。
+     依赖里带 rec.item —— 连点两次时结果变了，计时就重来。 */
+  useEffect(() => {
+    if (rec.status !== 'ok' || !rec.viaUser) {
+      setOkFading(false)
+      return undefined
+    }
+    setOkFading(false)
+    const timer = setTimeout(() => setOkFading(true), OK_HIDE_MS)
+    return () => clearTimeout(timer)
+  }, [rec.status, rec.viaUser, rec.item])
+
+  /* 结果换了 → 让整块轻轻闪一下。
+     用 class 切换而不是 key：class 变不会重建 DOM，键盘焦点留得住。 */
+  const [isFlash, setIsFlash] = useState(false)
+  useEffect(() => {
+    if (!rec.item) return undefined
+    setIsFlash(true)
+    const timer = setTimeout(() => setIsFlash(false), 320)
+    return () => clearTimeout(timer)
+  }, [rec.item])
+
   const filteredOut = rec.itemCount > 0
 
   return (
@@ -121,7 +176,7 @@ export default function Home({
       >
         {/* ② 主推荐卡 */}
         {rec.item && (
-          <section className="hero-block">
+          <section className={`hero-block result-swap${isFlash ? ' is-flash' : ''}`}>
             {/* Day 10：「今天就吃这家」这句原本在这里当小标签，
                 已提到页头做大标题 —— 这里不再重复说一遍 */}
             <FoodCard
@@ -129,11 +184,49 @@ export default function Home({
               variant="hero"
               footer={
                 <>
-                  <button className="draw-btn" type="button" onClick={onDraw}>
-                    换一个
+                  {/* 三态都在按钮上：正常「换一个」／加载中（不可用）／失败后变「重试」。
+                      失败时按钮就是重试入口，不用再多一个按钮。
+
+                      ⚠️ Day 11 · 甲：加载中**不用原生 `disabled`**。
+                      给一个"正被聚焦"的按钮设 disabled，浏览器会**立刻把焦点丢到 BODY**，
+                      而且设回 false 也**不会自己回来**（实测过，是 HTML 规范行为）。
+                      后果：键盘用户按第 1 次 Enter 生效、**第 2 次 Enter 就打不到按钮了**。
+                      改用 `aria-disabled` —— 读屏软件照样念得出"现在不可用"，
+                      而按钮保持可聚焦、焦点环不丢。
+                      "那连点会不会重复抽？" —— 不会：App.jsx 里的 drawingRef 就是干这个的
+                      （当初特意留的第二道保险，正好在这里派上用场）。 */}
+                  <button
+                    className="draw-btn"
+                    type="button"
+                    onClick={() => onDraw({ viaUser: true })}
+                    aria-disabled={isSwapping || undefined}
+                    aria-busy={isSwapping || undefined}
+                  >
+                    {isSwapping ? '加载中…' : rec.status === 'error' ? '重试' : '换一个'}
                   </button>
-                  {/* 候选恰好 1 个时说一句，免得用户以为「换一个」坏了（B4） */}
-                  {rec.candidateCount === 1 && (
+
+                  {/* 结果反馈。role="status" 让屏幕阅读器也念出来 ——
+                      "生效了"这件事，不该只有看得见的人知道。
+                      三个类名都写成字面量（不用 `draw-feedback ${feedback.kind}` 那种拼法）：
+                      这样类名能被静态检查查到，不会变成"查不到的动态类名"。 */}
+                  {feedback && (
+                    <p
+                      className={
+                        feedback.kind === 'ok'
+                          ? okFading
+                            ? 'draw-feedback ok is-fading'
+                            : 'draw-feedback ok'
+                          : 'draw-feedback err'
+                      }
+                      role="status"
+                    >
+                      {feedback.text}
+                    </p>
+                  )}
+
+                  {/* 候选恰好 1 个时说一句，免得用户以为「换一个」坏了（B4）。
+                      加载中不说这句 —— 那时按钮已经写着「加载中…」，两句话挤在一起太吵。 */}
+                  {rec.candidateCount === 1 && !isSwapping && (
                     <p className="result-tip">现在只有 1 个可选</p>
                   )}
                 </>

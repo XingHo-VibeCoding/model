@@ -12,7 +12,7 @@ import {
   setFilter,
 } from './lib/storage.js'
 import { applyFilter, collectTags } from './lib/filter.js'
-import { drawNext } from './lib/bag.js'
+import { describeError, fetchNextResult } from './lib/drawService.js'
 import { SPICY_ANY, TAG_PRESETS, VIEW_STATE } from './lib/constants.js'
 import Home from './pages/Home.jsx'
 import List from './pages/List.jsx'
@@ -51,13 +51,24 @@ export default function App() {
   const [filter, setFilterState] = useState({ spicyMax: SPICY_ANY, excludeTags: [] })
   const [history, setHistory] = useState([])
   const [updatedAt, setUpdatedAt] = useState(null)
-  const [rec, setRec] = useState({ status: 'idle', item: null, candidateCount: 0, itemCount: 0 })
+  const [rec, setRec] = useState({
+    status: 'idle',
+    item: null,
+    candidateCount: 0,
+    itemCount: 0,
+    error: null,
+  })
   const [storageIssue, setStorageIssue] = useState(false)
 
   // 洗牌袋只放内存，不写本地存储 —— PRD §5.2 规定「刷新就重新装袋」，
   // 所以它天生是个运行态。放进 useRef，切页面不丢，刷新才重置。
   const bagRef = useRef(null)
   const drawnForRef = useRef(null)
+  /* 防连点：正在取数时又点就忽略。按钮也会被禁用 ——
+     按钮禁用是给用户看的，这个 ref 是给逻辑兜底的（万一将来有人把 disabled 拿掉）。 */
+  const drawingRef = useRef(false)
+  /* 用来取消上一轮取数：连点多次时，只有最后一次的结果会生效 */
+  const drawAbortRef = useRef(null)
 
   /* 把数据层的真实状态同步到界面。
      存储才是唯一真相，界面不自己造一份 —— 这样任何时候显示的都是存储里的东西。 */
@@ -84,29 +95,75 @@ export default function App() {
         不进抽签池。所以改它们不会影响抽签结果，PRD §5.2 的洗牌袋一个字不用改。 */
   const candidates = useMemo(() => applyFilter(items, filter), [items, filter])
 
-  /* 抽一个结果。顺序严格按 PRD §5.2：算候选 → 装袋/取袋 → 写历史。 */
-  const draw = useCallback(() => {
+  /* 抽一个结果。顺序严格按 PRD §5.2：算候选 → 装袋/取袋 → 写历史。
+
+     ⚠️ Day 11 改成了**异步**。为什么：取数这件事将来要跨网络，而"跨网络"
+        必然带来两件现在没有的事 —— ① 有等待期（loading）② 会失败（error）。
+        现在数据在本地，这两态都不会真发生，但状态机必须先建起来。
+        取数的实现在 lib/drawService.js，那里有两个人工开关能把这两态调出来看。 */
+  const draw = useCallback(async (opts) => {
+    /* viaUser = 这次是**用户点出来的**（不是页面自动抽的）。
+       界面靠它决定要不要说「切换成功」——
+       首次自动抽取也是 ok，但那时用户没做任何操作，弹提示会莫名其妙。 */
+    const viaUser = opts?.viaUser === true
+
+    // 正在取数时又点了一次 → 忽略（按钮同时会被禁用，这里是第二道保险）
+    if (drawingRef.current) return
+
     const all = loadItems()
     const pool = applyFilter(all, getFilter())
 
     // 候选为 0 → 不抽取，只给提示；绝不回退到被过滤掉的条目（H3）
     if (pool.length === 0) {
       bagRef.current = null
-      setRec({ status: 'empty', item: null, candidateCount: 0, itemCount: all.length })
+      setRec({ status: 'empty', item: null, candidateCount: 0, itemCount: all.length, error: null })
       return
     }
 
     // 「上一次结果」= 历史记录里最新的一条（含刷新前产生的），靠 itemId 传递
     const lastResultId = getHistory()[0]?.itemId ?? null
-    const { id, bag } = drawNext(bagRef.current, pool, lastResultId)
-    bagRef.current = bag
 
-    const item = pool.find((c) => c.id === id)
-    if (!item) return
+    // 取消上一轮还没结束的取数（连点场景），然后进入「加载中」
+    drawAbortRef.current?.abort()
+    const controller = new AbortController()
+    drawAbortRef.current = controller
 
-    appendHistory(item) // 取出的结果写入历史记录
-    setRec({ status: 'ok', item, candidateCount: pool.length, itemCount: all.length })
-    sync()
+    drawingRef.current = true
+    /* 注意：这里**保留当前 item**，只把状态切成 loading。
+       结果卡片因此不会消失、布局不会跳 —— 对应的要求是「保持现有卡片布局」。 */
+    setRec((r) => ({ ...r, status: 'loading', error: null }))
+
+    try {
+      const { id, bag } = await fetchNextResult({
+        bag: bagRef.current,
+        pool,
+        lastResultId,
+        signal: controller.signal,
+      })
+      // 被取消的这一轮：什么都不做（不算失败，也不动界面）
+      if (controller.signal.aborted) return
+
+      bagRef.current = bag
+      const item = pool.find((c) => c.id === id)
+      if (!item) throw new Error('取到的结果不在候选里')
+
+      appendHistory(item) // 取出的结果写入历史记录
+      setRec({
+        status: 'ok',
+        item,
+        candidateCount: pool.length,
+        itemCount: all.length,
+        error: null,
+        viaUser,
+      })
+      sync()
+    } catch (err) {
+      // 主动取消 / 被新一轮顶掉 → 不算失败，界面上什么都不该变
+      if (controller.signal.aborted || err?.name === 'AbortError') return
+      setRec((r) => ({ ...r, status: 'error', error: describeError(err) }))
+    } finally {
+      drawingRef.current = false
+    }
   }, [sync])
 
   /* 每次「进入首页」都重新抽一次。

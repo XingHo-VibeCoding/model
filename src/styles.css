@@ -14,6 +14,9 @@
   --ink: #2b2620;
   --ink-2: #5f564c;
   --ink-3: #6b6157;
+  /* 警示色。项目原本只有橙色调，但「切换失败」必须有区分度 ——
+     在浅底上 6.30:1，够 WCAG 正文标准（≥4.5:1）。 */
+  --danger: #b3261e;
   --line: #ece3d9;
   --bg: #fffaf5;
   --card: #ffffff;
@@ -174,12 +177,30 @@ body {
   cursor: pointer;
 }
 
-.draw-btn:hover {
-  background: #cf4f0a;
+/* ⚠️ 这里原本是 #cf4f0a（深橙）—— 但按钮文字现在是深色，
+   深底配深字会把对比度压到 2 左右。所以 hover 要**变浅**而不是变深：
+   文字是深色时，底越浅对比度越高（#f5842f + 深字 = 5.87:1）。
+
+   ⚠️ Day 11 · 甲：这里加了 `:not([aria-disabled='true'])` ——
+   加载中按钮不再用原生 disabled，如果不管住 hover/active，
+   它会在"不可用"的时候依然变亮、依然按下下沉，等于在暗示"你还能点"。 */
+.draw-btn:not([aria-disabled='true']):hover {
+  background: #f5842f;
 }
 
-.draw-btn:active {
+.draw-btn:not([aria-disabled='true']):active {
   transform: translateY(1px);
+}
+
+/* 加载中：**只是视觉上**不可用，按钮本身仍然可聚焦（Day 11 · 甲）。
+   为什么不用原生 `:disabled`：它会把键盘焦点踢到 BODY 且不还回来，
+   键盘用户按一次 Enter 之后就再也打不到这个按钮了。
+   底用中性灰、字用 --ink-2（5.42:1）—— 虽然 WCAG 对不可用控件豁免对比度，
+   但"看不清为什么点不动"更糟。 */
+.draw-btn[aria-disabled='true'] {
+  background: #e8ded4;
+  color: var(--ink-2);
+  cursor: progress;
 }
 
 .result-tip {
@@ -672,6 +693,59 @@ body {
 }
 
 /* ── 主推荐区：一张 hero 卡片，打开就有一个具体结果（PRD A1 / A3）── */
+
+/* 结果切换时轻轻地闪一下 —— 表达"同一个位置换了个东西"，
+   而不是"页面重新加载了"。
+   ⚠️ 用 class 切换触发，**不用 key 重建**：重建会把键盘焦点弄丢
+      （用户按 Enter 换一个，焦点就飞走了）。 */
+@keyframes swap-in {
+  from {
+    opacity: 0.35;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.result-swap.is-flash {
+  animation: swap-in 300ms ease-out;
+}
+
+/* 系统开了"减少动效"就不闪（Day 8 的骨架屏也是这么处理的） */
+@media (prefers-reduced-motion: reduce) {
+  .result-swap.is-flash {
+    animation: none;
+  }
+}
+
+/* 一次「换一个」的结果反馈。显示到下次点击为止，不自动消失 ——
+   这样连点不会误判，截图也不会错过。 */
+.draw-feedback {
+  margin: 10px 0 0;
+  font-size: 13px;
+  text-align: center;
+  /* Day 11 · 复盘修正：成功提示 2.5 秒后会淡出，所以这里要有过渡。
+     ⚠️ 淡出用 opacity，**不用 display:none、也不卸载元素** ——
+        那两种情况都会让下面那句「加上我常吃的」往上一跳，
+        而"布局别跳"是硬要求。淡出后它只是看不见，位置还占着。 */
+  transition: opacity 0.4s ease;
+}
+
+.draw-feedback.ok {
+  color: var(--brand-ink);
+}
+
+.draw-feedback.err {
+  color: var(--danger);
+}
+
+/* 「切换成功」收起来的样子（JS 到点在元素上加 is-fading）。
+   失败提示永远不会加这个类 —— 它要一直留在那儿等用户处理。 */
+.draw-feedback.ok.is-fading {
+  opacity: 0;
+}
 
 .hero-block {
   margin-top: 20px;
