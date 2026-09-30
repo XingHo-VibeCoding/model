@@ -145,9 +145,12 @@ body {
   margin: 0 0 6px;
 }
 
+/* Day 12：14px → 16px（同上）。
+   这个类只用在两处，都是"要读懂才知道下一步怎么做"的说明 ——
+   首页筛选筛空时的提示、以及清单/添加/历史三页页头的说明 —— 所以按正文对待。 */
 .hint {
   margin: 0;
-  font-size: 14px;
+  font-size: 16px;
   color: var(--ink-2);
 }
 
@@ -285,15 +288,19 @@ body {
 
 /* ── 清单页 / 添加页 / 历史页 共用的小件 ─────────────────────────── */
 
+/* Day 12：14px → 16px（按 frontend-guidelines 的「正文 16px」）。
+   这句话是"我筛出几条"的反馈，用户要靠它判断筛得对不对 —— 属于正文，不是控件旁的小字。
+   里面的数字跟着提到 18px：正文和数字一样大就没有重点了，
+   18px 保住"数字更醒目"这层关系，也还在字号刻度（12/13/14/16/17/18/19/20）里。 */
 .count-line {
   margin-top: 16px;
-  font-size: 14px;
+  font-size: 16px;
   color: var(--ink-2);
 }
 
 .count-line b {
   color: var(--brand-ink);
-  font-size: 16px;
+  font-size: 18px;
 }
 
 .center {
@@ -874,7 +881,9 @@ body {
   flex-direction: column;
   gap: 10px;
   min-width: 0; /* 防横向溢出的第 2 条：卡片自己也要能被压缩 */
-  padding: 14px;
+  /* Day 12：按 frontend-guidelines 的「卡片内边距 16px」统一 —— 原来写 14px 是 Day 8 随手定的，
+     和规则对不上。主推荐卡（.food-card.hero）是 20px 18px，本来就 ≥16，不动。 */
+  padding: 16px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--card);

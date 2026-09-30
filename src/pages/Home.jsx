@@ -276,7 +276,14 @@ export default function Home({
             />
           </div>
 
-          <p className="count-line">
+          {/* Day 12 · 余力加练：这一行加 role="status"，
+              这样点完筛选，用读屏软件的人也能听到「当前显示 X 个」——
+              以前只有看得见的人知道筛出了几条。
+
+              为什么**只**加在这一行、不给下面那句空态提示也加：
+              筛空时这一行会念「当前显示 0 个」，已经说清结果了；
+              两处同时播报会念两遍，反而更吵。 */}
+          <p className="count-line" role="status">
             共 <b>{candidates.length}</b> 个候选，当前显示 <b>{gridItems.length}</b> 个
           </p>
 
