@@ -33,17 +33,37 @@ function readHash() {
   return PAGES.some((p) => p.hash === hash) ? hash : '#/'
 }
 
-/* 人工触发 loading / error 的开关（地址栏加 ?state=loading 或 ?state=error）。
+/* ── 「状态演示」开关（Day 13）────────────────────────────────────────
+   地址栏加 ?demo=normal ｜ empty ｜ loading ｜ error。
 
-   为什么要留这个开关：数据全部来自 localStorage，是同步读取、不联网的 ——
-   这两种状态**本来就遇不到**。它们是给第 3 周接真实 API 预留的位置，
-   真到那天，它们会自己出现；在那之前，只能这样手动把它们调出来看一眼，
-   免得放几个月没人管、接上 API 那天才发现样式全不对。 */
-function readForcedState() {
+   为什么要留它：数据全部来自 localStorage，是同步读取、不联网的 ——
+   「加载中」和「错误」这两种状态**本来就遇不到**。它们是给第 3 周接真实 API
+   预留的位置；在那之前，只能手动把它们调出来看一眼，
+   免得放几个月没人管、接上 API 那天才发现样式全不对。
+
+   ⚠️ 它**只给验收和开发用，不给用户看**：
+      页脚那个下拉只在地址里带了 `?demo=` 时才出现 ——
+      客户打开产品时，页面上一个字都不会多出来。                        */
+const DEMO_OPTIONS = [
+  { value: VIEW_STATE.success, label: '正常' },
+  { value: VIEW_STATE.empty, label: '空' },
+  { value: VIEW_STATE.loading, label: '加载中' },
+  { value: VIEW_STATE.error, label: '错误' },
+]
+
+/* 读地址栏里的 ?demo=。没有、或者值不认识 → 返回 null（= 正常产品状态） */
+function readDemoState() {
   if (typeof window === 'undefined') return null
-  const s = new URLSearchParams(window.location.search).get('state')
-  return s === VIEW_STATE.loading || s === VIEW_STATE.error ? s : null
+  const s = new URLSearchParams(window.location.search).get('demo')
+  return DEMO_OPTIONS.some((o) => o.value === s) ? s : null
 }
+
+/* 数据说明 —— 放在页脚，所有页面都看得到。
+   它同时顶掉了两件事：① 让人知道店名是真品牌、菜品是内置清单
+   ② 说清"不涉及交易、不接平台数据"，免得用户以为这里能下单 */
+const DATA_NOTE =
+  '店名为真实连锁品牌，菜品为内置清单。本工具只帮你决定吃什么、去哪家 —— ' +
+  '不涉及任何交易，也不接入任何平台数据。'
 
 export default function App() {
   const [hash, setHash] = useState(readHash)
@@ -59,6 +79,17 @@ export default function App() {
     error: null,
   })
   const [storageIssue, setStorageIssue] = useState(false)
+
+  /* 演示状态（地址栏 ?demo=）。放成 state 而不是每次读地址栏 ——
+     这样页脚那个下拉一改，界面立刻跟着变。 */
+  const [demoState, setDemoState] = useState(readDemoState)
+
+  /* 「返回上一页」用：记住上一个页面是哪一个。
+     ⚠️ 不用 history.back() —— 用户直接打开 #/list（没有上一页）时，
+        history.back() 会把他**带出站外**，那就成了 bug。
+        自己记一个"上一个页面"，没有记录就退回首页，行为可控。 */
+  const prevHashRef = useRef(null)
+  const lastHashRef = useRef(hash)
 
   // 洗牌袋只放内存，不写本地存储 —— PRD §5.2 规定「刷新就重新装袋」，
   // 所以它天生是个运行态。放进 useRef，切页面不丢，刷新才重置。
@@ -84,6 +115,14 @@ export default function App() {
     window.addEventListener('hashchange', onChange)
     return () => window.removeEventListener('hashchange', onChange)
   }, [])
+
+  /* 页面变了 → 把"刚才那一页"记下来，给页头的「返回」按钮用 */
+  useEffect(() => {
+    if (lastHashRef.current !== hash) {
+      prevHashRef.current = lastHashRef.current
+      lastHashRef.current = hash
+    }
+  }, [hash])
 
   useEffect(() => {
     sync()
@@ -229,14 +268,34 @@ export default function App() {
     [items],
   )
 
-  /* 首页要显示的四种状态。
-     forced（地址栏参数）优先；否则按真实数据判断 ——
-     能自然发生的只有 success 和 empty 两种。 */
-  const viewState = useMemo(() => {
-    const forced = readForcedState()
-    if (forced) return forced
-    return rec.status === 'empty' ? VIEW_STATE.empty : VIEW_STATE.success
-  }, [rec.status])
+  /* ⚠️ 这里**不再**统一算四种状态，只把「演示覆盖值」往下传。
+     为什么：每个页面该看自己的数据 —— 首页看推荐抽取的结果，清单页看条目数量，
+     历史页看记录条数。拿首页的状态去套别的页面，会出现
+     "首页候选为 0 → 清单页也跟着显示空态"这种张冠李戴的错。
+     所以规则是：`页面自己算状态`，演示参数来了就覆盖掉。 */
+  const demoOverride = demoState
+
+  /* 换演示状态：改 React 状态（界面立刻变）+ 同步地址栏（刷新后保持同一个状态）。
+     用 replaceState 而不是改 location.search —— 后者会**刷新页面**，一闪一闪的不好看。 */
+  const handleDemoChange = useCallback((value) => {
+    setDemoState(value)
+    const url = new URL(window.location.href)
+    url.searchParams.set('demo', value)
+    window.history.replaceState({}, '', url)
+  }, [])
+
+  /* 退出演示：把 ?demo= 从地址里删掉，下拉也跟着收起来 */
+  const handleDemoExit = useCallback(() => {
+    setDemoState(null)
+    const url = new URL(window.location.href)
+    url.searchParams.delete('demo')
+    window.history.replaceState({}, '', url)
+  }, [])
+
+  /* 「返回上一页」：有记录就回上一页，没有（比如直接输地址进来的）就回首页 */
+  const handleBack = useCallback(() => {
+    window.location.hash = prevHashRef.current ?? '#/'
+  }, [])
 
   const page = PAGES.find((p) => p.hash === hash) ?? PAGES[0]
 
@@ -248,7 +307,7 @@ export default function App() {
       rec.status === 'idle' ? null : (
         <Home
           rec={rec}
-          viewState={viewState}
+          demoOverride={demoOverride}
           candidates={candidates}
           filter={filter}
           updatedAt={updatedAt}
@@ -262,6 +321,7 @@ export default function App() {
       <List
         items={items}
         filter={filter}
+        demoOverride={demoOverride}
         onRemove={handleRemove}
         onRestore={handleRestore}
         onFilterChange={handleFilterChange}
@@ -270,7 +330,7 @@ export default function App() {
   } else if (page.hash === '#/add') {
     content = <Add tagOptions={addTagOptions} onAdd={handleAdd} />
   } else {
-    content = <History entries={history} />
+    content = <History entries={history} demoOverride={demoOverride} />
   }
 
   return (
@@ -284,6 +344,9 @@ export default function App() {
               key={p.hash}
               href={p.hash}
               className={p.hash === page.hash ? 'nav-item active' : 'nav-item'}
+              /* aria-current="page" —— 让读屏软件也知道"你现在在哪一页"。
+                 只有它，光靠一个 active 类名，屏幕阅读器是读不出来的。 */
+              aria-current={p.hash === page.hash ? 'page' : undefined}
             >
               {p.title}
             </a>
@@ -302,6 +365,12 @@ export default function App() {
         <section className={page.hash === '#/' ? 'panel panel-wide' : 'panel'}>
           {page.hash !== '#/' && (
             <>
+              {/* 返回上一页。首页是入口，不需要这个按钮，所以只在其余三页出现。
+                  ⚠️ 没走 history.back()（直接输地址进来时会把人带出站外），
+                     而是回到"刚才那一页"，没有记录就回首页 —— 见 handleBack。 */}
+              <button className="back-btn" type="button" onClick={handleBack}>
+                ← 返回
+              </button>
               <h1>{page.title}</h1>
               {page.hint && <p className="hint">{page.hint}</p>}
             </>
@@ -309,7 +378,35 @@ export default function App() {
           {content}
         </section>
 
-        <p className="footer">当前页面地址：{page.hash}</p>
+        <footer className="footer">
+          {/* 数据说明：原来挂在首页网格下面，Day 13 挪到页脚 ——
+              它讲的是整个产品（数据从哪来、不涉及什么），放页脚所有页面都看得到。
+              顺便顶掉了原来页脚那行「当前页面地址」，那是开发时看的，不该给用户看到。 */}
+          <p className="data-note">{DATA_NOTE}</p>
+
+          {/* 「状态演示」开关：**只有地址里带了 ?demo= 才出现** ——
+              客户打开产品时页面上一个字都不会多出来。 */}
+          {demoState && (
+            <p className="demo-bar">
+              <span className="demo-label">状态演示</span>
+              <select
+                className="select demo-select"
+                value={demoState}
+                onChange={(e) => handleDemoChange(e.target.value)}
+                aria-label="切换演示状态"
+              >
+                {DEMO_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </select>
+              <button className="demo-exit" type="button" onClick={handleDemoExit}>
+                退出演示
+              </button>
+            </p>
+          )}
+        </footer>
       </main>
     </div>
   )

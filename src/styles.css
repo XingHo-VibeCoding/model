@@ -586,11 +586,79 @@ body {
   font-size: 12px;
 }
 
+/* 页脚（Day 13 改版）。
+   原来这里只有一行「当前页面地址：#/list」—— 那是开发时看的，产品里不该出现。
+   现在装两样东西：① 产品级的数据说明（所有页面都看得到）
+                 ② 状态演示开关（**只有地址带 ?demo= 时才渲染**，客户面前是空的） */
 .footer {
-  margin: 18px 0 0;
+  margin: 22px 0 0;
   text-align: center;
+}
+
+/* 数据说明。12px 是刻意的：它是免责性的补充信息，不是用户要读的正文
+   （颜色 5.83:1，不会看不清）。 */
+.data-note {
+  margin: 0;
   font-size: 12px;
+  line-height: 1.7;
   color: var(--ink-3);
+}
+
+/* ── 状态演示开关 ─────────────────────────────────────────────────
+   它只在地址栏带了 ?demo= 时才出现，正常访问产品时页面上一个字都没有。
+   所有控件都守住 44px 的触控目标。 */
+.demo-bar {
+  margin: 12px 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink-2);
+}
+
+.demo-label {
+  flex: none;
+}
+
+/* 复用 .select 的外观，但要把它的 width:100% 收回来（那是给表单用的） */
+.demo-select {
+  width: auto;
+  min-height: 44px;
+  padding: 0 10px;
+  font-size: 14px;
+}
+
+.demo-exit {
+  min-height: 44px;
+  padding: 0 10px;
+  border: 0;
+  background: none;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--brand-ink);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* 「返回上一页」—— 只在非首页出现（首页是入口，没什么可返回的） */
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  margin-bottom: 2px;
+  padding: 0 10px 0 0;
+  border: 0;
+  background: none;
+  font-size: 14px;
+  font-family: inherit;
+  color: var(--brand-ink);
+  cursor: pointer;
+}
+
+.back-btn:hover {
+  text-decoration: underline;
 }
 
 /* 手机竖屏（375px）*/
@@ -835,15 +903,9 @@ body {
   font-weight: 600;
 }
 
-/* 「演示数据」标注 —— 有了这句，就不用去改 PRD §7.2「不接真实平台数据」 */
-.demo-note {
-  margin: 16px 0 0;
-  padding-top: 12px;
-  border-top: 1px dashed var(--line);
-  font-size: 12px;
-  line-height: 1.7;
-  color: var(--ink-3);
-}
+/* Day 13：原来这里有个 `.demo-note`（首页网格下面那句「演示数据：…」）。
+   已挪到**页脚**（App.jsx 的 DATA_NOTE，所有页面都看得到）→ 这条样式随之删掉，
+   不留死样式。它的观感由下面的 `.data-note` 接手。 */
 
 /* 网格为空时的提示（换个类别/平台看看）*/
 .browse-block .hint {

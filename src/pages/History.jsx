@@ -1,11 +1,14 @@
+import { VIEW_STATE } from '../lib/constants.js'
 import EmptyState from '../components/EmptyState.jsx'
+import ViewState from '../components/ViewState.jsx'
 
 /* 页面 4 · 历史记录（PRD §5）
    - 按时间倒序，最新的在最上面；每条显示**名称与时间**（J4）
    - 最多 20 条，超出后最早的被移除 —— 这个「裁剪」在数据层做（storage.js），
      界面这里只管显示，不重复实现一遍规则
    - 没有记录时显示「还没有记录」，不是空白（J3）
-   - **删除条目不影响这里**：历史存的是当时的名称快照，从来不去回查条目（J4） */
+   - **删除条目不影响这里**：历史存的是当时的名称快照，从来不去回查条目（J4）
+   **Day 13 补齐四种状态**：正常 / 空 / 加载中 / 错误都有人管（见下面的 state）。 */
 
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
 
@@ -22,8 +25,16 @@ function formatTime(at) {
   return sameDay ? `今天 ${hm}` : `${d.getMonth() + 1}月${d.getDate()}日 周${WEEKDAYS[d.getDay()]} ${hm}`
 }
 
-export default function History({ entries }) {
-  if (!entries.length) {
+export default function History({ entries, demoOverride }) {
+  /* 四种状态：**演示参数优先，否则按自己的真实数据算**（历史页看的是"记录条数"）。
+     能自然发生的是"正常"和"空"；加载中 / 错误是给第 3 周接真实 API 预留的位置。 */
+  const state = demoOverride ?? (entries.length === 0 ? VIEW_STATE.empty : VIEW_STATE.success)
+
+  if (state === VIEW_STATE.loading || state === VIEW_STATE.error) {
+    return <ViewState state={state} />
+  }
+
+  if (state === VIEW_STATE.empty) {
     return (
       <EmptyState title="还没有记录" text="去首页看一眼，推荐过什么就会记在这儿。">
         <a className="btn" href="#/">

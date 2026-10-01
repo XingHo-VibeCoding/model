@@ -6,8 +6,9 @@ import { VIEW_STATE } from '../lib/constants.js'
      · success —— 有候选、正常显示            ✅ 自然发生
      · empty   —— 候选为 0（清单空 / 过滤太严）✅ 自然发生
      · loading —— 数据从 localStorage **同步**读，根本没有等待
-                                                 ⚠️ 现在只在地址栏加 ?state=loading 才出现
-     · error   —— 不联网，也就没有"请求失败"   ⚠️ 现在只在地址栏加 ?state=error 才出现
+                                                 ⚠️ Day 13 起用页脚的「状态演示」开关调出来
+     · error   —— 不联网，也就没有"请求失败"   ⚠️ 同上（地址加 ?demo=error 也行）
+                            （参数统一成了 ?demo= ，见 App.jsx）
 
    loading / error 是给**第 3 周接真实 API 预留的位置**：那天数据要过网络，
    这两个状态才会真的发生。现在把它们做出来、并且能人工触发，是为了那时候不用回头补。

@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react'
-import { SPICY_LABEL, SPICY_MAX_OPTIONS, TAG_PRESETS } from '../lib/constants.js'
+import { SPICY_LABEL, SPICY_MAX_OPTIONS, TAG_PRESETS, VIEW_STATE } from '../lib/constants.js'
 import { collectTags } from '../lib/filter.js'
 import ItemRow from '../components/ItemRow.jsx'
 import EmptyState from '../components/EmptyState.jsx'
+import ViewState from '../components/ViewState.jsx'
 
 /* 页面 2 · 我的清单（PRD §5）
    - 列出全部条目，每条显示名称 / 类型 / 辣度 / 忌口标签（C4）
@@ -11,9 +12,18 @@ import EmptyState from '../components/EmptyState.jsx'
    - 可选过滤，**默认不生效**（H1）；过滤条件会持久化（H4）
    - 「恢复默认库」把内置条目补回来，已有的不重复添加（C3）
    - 清单为空时给引导，不是空白（F1）
+   **Day 13 补齐四种状态**：正常 / 空 / 加载中 / 错误都有人管（见下面的 state）。
    这个组件只负责显示和收集操作，数据都由 App 传进来。 */
-export default function List({ items, filter, onRemove, onRestore, onFilterChange }) {
+export default function List({ items, filter, demoOverride, onRemove, onRestore, onFilterChange }) {
   const [customTag, setCustomTag] = useState('')
+
+  /* 四种状态：**演示参数优先，否则按自己的真实数据算**。
+     ⚠️ 状态由每个页面自己算 —— 清单页看的是"条目数量"，
+        跟首页推荐抽取的结果是两码事，不能共用。
+     能自然发生的只有"正常"和"空"；加载中 / 错误在本地数据架构下遇不到，
+     是给第 3 周接真实 API 预留的位置（用页脚的「状态演示」调出来看）。 */
+  const state = demoOverride ?? (items.length === 0 ? VIEW_STATE.empty : VIEW_STATE.success)
+  const isBusy = state === VIEW_STATE.loading || state === VIEW_STATE.error
 
   const userCount = items.filter((it) => it.source === 'user').length
 
@@ -40,13 +50,21 @@ export default function List({ items, filter, onRemove, onRestore, onFilterChang
     setCustomTag('')
   }
 
+  /* 加载中 / 错误：交给统一的四态外壳（骨架屏 / 错误页 + 重试）。
+     其余两种走下面的正常渲染 —— 空态仍用原来的 EmptyState，观感跟以前一模一样。 */
+  if (isBusy) {
+    return <ViewState state={state} onRetry={onRestore} />
+  }
+
+  const isEmpty = state === VIEW_STATE.empty
+
   return (
     <>
       <div className="count-line">
         共 <b>{items.length}</b> 个 · 其中你自己加了 <b>{userCount}</b> 个
       </div>
 
-      {items.length === 0 ? (
+      {isEmpty ? (
         <EmptyState
           title="清单还是空的"
           text="加几个常吃的进来，或者把默认库补回来。"

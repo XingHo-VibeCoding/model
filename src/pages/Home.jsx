@@ -9,6 +9,7 @@ import {
   TYPE_FILTER_ALL,
   TYPE_FILTER_LABEL,
   TYPE_FILTER_OPTIONS,
+  VIEW_STATE,
 } from '../lib/constants.js'
 import PageHeader from '../components/PageHeader.jsx'
 import FoodCard from '../components/FoodCard.jsx'
@@ -37,7 +38,7 @@ const SPICY_ORDER = { none: 0, mild: 1, medium: 2, hot: 3 }
 
 export default function Home({
   rec, // { status, item, candidateCount, itemCount }
-  viewState, // success / empty / loading / error
+  demoOverride, // 演示状态（地址栏 ?demo=）—— 有值就盖掉下面算出来的真实状态
   candidates, // 当前候选（已过辣度与忌口）
   filter,
   updatedAt,
@@ -47,6 +48,14 @@ export default function Home({
 }) {
   const platformFilter = filter?.platformFilter ?? PLATFORM_FILTER_ALL
   const typeFilter = filter?.typeFilter ?? TYPE_FILTER_ALL
+
+  /* 四种状态：**演示参数优先，否则按自己的真实数据算**。
+     ⚠️ 状态由每个页面自己算（不统一在 App 里算）——
+        拿首页的状态去套清单页会出现"首页候选为 0 → 清单页也显示空态"这种张冠李戴。
+     能自然发生的只有 success 和 empty；loading / error 在本地数据架构下遇不到，
+     是给第 3 周接真实 API 预留的位置（用页脚的「状态演示」开关人工调出来看）。 */
+  const viewState =
+    demoOverride ?? (rec.status === 'empty' ? VIEW_STATE.empty : VIEW_STATE.success)
 
   /* 网格里显示什么：候选 → 套一层「类别 / 平台」筛选 → 再按**口味偏好**排序。
      注意 platform === 'any'（用户自己加的、没标平台）在选了某个平台时**照样显示** ——
@@ -293,11 +302,11 @@ export default function Home({
             empty={<p className="hint">这一组没有符合条件的条目，换个类别或平台看看。</p>}
           />
 
-          {/* 有了这句，就不用去改 PRD §7.2「不接真实外卖平台数据」 */}
-          <p className="demo-note">
-            演示数据：店名都是真实连锁品牌。这个工具只帮你决定吃什么、去哪家，
-            不涉及任何交易，也不接任何平台数据。
-          </p>
+          {/* Day 13：这里原来挂着一句「演示数据：…」的说明，已挪到**页脚**
+              （App.jsx 的 DATA_NOTE，所有页面都看得到）。
+              为什么挪走：它讲的是**整个产品**（数据从哪来、不涉及什么），
+              不是首页独有的东西；顺手也把页脚那行「当前页面地址」替掉了 ——
+              那是开发时看的，不该出现在产品里。 */}
         </section>
       </ViewState>
 
