@@ -1,0 +1,8 @@
+{
+  "name": "api",
+  "version": "1.0.0",
+  "description": "想吃啥 · 云函数入口（Day 15 只实现 GET /api/health）",
+  "main": "index.js",
+  "private": true,
+  "license": "UNLICENSED"
+}

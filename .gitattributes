@@ -1,0 +1,5 @@
+# HTTP 云函数的启动脚本「必须」是 LF 换行。
+# 用 CRLF 部署上去会报 exec format error —— 这是 Windows 上最常见的坑。
+# 而 Windows 的 Git 默认可能做换行转换（上面那条 warning 就是在提示这件事），
+# 所以在这里钉死：所有 scf_bootstrap 一律按 LF 处理，不随平台变。
+cloudfunctions/**/scf_bootstrap text eol=lf
