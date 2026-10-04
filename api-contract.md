@@ -44,16 +44,18 @@
 
 ### 表 1：`items` —— 候选条目（菜 / 店）
 
+> ✅ **已落地**（Day 16）：建表脚本见仓库 `db/schema.sql`。
+
 | 列 | 类型 | 约束 | 说明 |
 |---|---|---|---|
-| `id` | text | PK | 条目标识。内置条目用固定的稳定 id，用户新增的用生成的 id |
-| `name` | text | NOT NULL | 名称，1–20 字（去首尾空格，**含全角空格 U+3000**） |
-| `type` | text | NOT NULL | `dish`（菜）/ `shop`（店） |
-| `platform` | text | NOT NULL | `mt`（美团）/ `tb`（淘宝闪购）/ `any`（不限） |
-| `spicy` | text | NOT NULL DEFAULT `any` | `none` / `mild` / `medium` / `hot` / `any`（不限 = 通过任何辣度上限） |
-| `tags` | text[] | DEFAULT `{}` | 忌口标签，如 `{香菜, 海鲜}` |
-| `source` | text | NOT NULL | `builtin`（内置库）/ `user`（用户自己加的） |
-| `created_at` | timestamptz | DEFAULT now() | |
+| `id` | text | PK，默认 `gen_random_uuid()` | 条目标识。内置条目用固定的稳定 id（如 `b01`），用户新增的自动生成 |
+| `name` | text | NOT NULL，**UNIQUE** | 名称，1–20 字（按字符数）。**必须已去除首尾空白**（含全角空格 U+3000） |
+| `type` | text | NOT NULL，`CHECK IN ('dish','shop')` | `dish`（菜）/ `shop`（店） |
+| `platform` | text | NOT NULL，`CHECK IN ('mt','tb','any')` | `mt`（美团）/ `tb`（淘宝闪购）/ `any`（不限） |
+| `spicy` | text | NOT NULL DEFAULT `any`，`CHECK IN ('none','mild','medium','hot','any')` | `any`（不限）= 通过任何辣度上限 |
+| `tags` | text[] | NOT NULL DEFAULT `{}` | 忌口标签，如 `{香菜, 海鲜}` |
+| `source` | text | NOT NULL，`CHECK IN ('builtin','user')` | `builtin`（内置库）/ `user`（用户自己加的） |
+| `created_at` | timestamptz | NOT NULL DEFAULT now() | |
 
 **两条业务约束（写在 PRD 里的，建表时要保证）**：
 
@@ -62,17 +64,30 @@
 2. **用户自己加的条目默认永远不会被筛掉** —— 这是"零门槛"这条产品原则的落地，
    不是疏忽。
 
+**唯一约束加在 `name` 上**（Day 16 定）：同一份清单里不允许两个同名条目。
+按课程要求，**唯一约束只加在业务字段上**，不掺"用户"概念 —— 本期没有用户体系。
+
 ### 表 2：`history` —— 推荐历史
+
+> ✅ **已落地**（Day 16）：建表脚本见仓库 `db/schema.sql`。
 
 | 列 | 类型 | 约束 | 说明 |
 |---|---|---|---|
 | `id` | bigserial | PK | |
+| `item_id` | text | **FK → `items(id)` ON DELETE SET NULL** | **两张表的关联字段** |
 | `item_name` | text | NOT NULL | **当时的名称快照** |
-| `drawn_at` | timestamptz | DEFAULT now() | |
+| `drawn_at` | timestamptz | NOT NULL DEFAULT now() | |
 
-⚠️ **`item_name` 存的是快照，不是外键**。
-原因：**删掉一个条目，不该让它历史上的那次推荐跟着消失**（PRD 的 J4）。
-所以这里**故意不做外键关联**，存名字本身。
+**为什么 `item_id` 和 `item_name` 两个都要**（Day 16 定稿，这一版改过）：
+
+- 有 **`item_id`** → 两张表**有明确关联**，能查、能统计、能追溯
+- 有 **`item_name`** → 就算那个条目后来被删了（`item_id` 自动变 `NULL`），
+  历史记录**照样显示得出"那天抽的是鸡公煲"**（PRD 的 J4）
+
+⚠️ 这里曾经写的是"只存名字快照、故意不做外键" —— 那样两张表就没关系了。
+现在两个都留：**既有关联，又不丢历史**。`ON DELETE SET NULL` 是关键：
+删条目时它**置空**，而不是把这条历史一起删掉。
+（Day 16 实测验证过：删掉 `b01` 后，历史里那条仍在、`item_id` 变 `NULL`、名字保留。）
 
 **只保留最近 20 条**（PRD 的 J4），超出后最早的被删掉 —— 这个裁剪规则放存储层做。
 
