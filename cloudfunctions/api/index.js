@@ -1,48 +1,120 @@
 'use strict'
 
 /* 云函数：api（**HTTP 云函数**）
- * 触发路径：GET /api/health
  *
  * ── 它是什么 ──────────────────────────────────────────────────────
- * HTTP 云函数本质是一个「跑在云上的 Web 服务」，不是事件函数。
- * 所以这里不能用 exports.main(event, context) —— 那是普通云函数的契约。
- * 这里要自己起一个 HTTP 服务，并且**必须监听 9000 端口**（平台硬性要求）。
+ * 一个跑在云上的 Web 服务，自己监听 9000 端口（平台硬性要求）。
+ * 不是事件函数 —— 所以不能用 exports.main(event, context)。
  *
- * ── 为什么用 Node 原生 http，而不是 Express ────────────────────────
- * HTTP 云函数**不会自动帮你装依赖**（node_modules 要自己带）。
- * 原生模块零依赖 → 打包体积最小、冷启动最快，也不需要上传 node_modules。
- * 第 3 周接口变多了，再考虑引框架。
+ * ── 它提供什么 ─────────────────────────────────────────────────────
+ *   GET /api/health    后端活着吗（不查库）
+ *   GET /api/items     读全部候选条目          ← 首页候选池、清单页都用它
+ *   GET /api/history   读最近的历史记录（倒序）  ← 历史记录页
  *
- * ── 它只做一件事 ─────────────────────────────────────────────────
- * 回答"后端还活着吗"。不连数据库、不读环境变量、不做业务。
- * 目的是先单独跑通「公网 → 云函数 → 返回 JSON」这条链路，
- * 这样链路的问题和以后业务的问题不会混在一起、查不清是谁的错。
+ * 依据：仓库根目录 api-contract.md 第四节。
+ *
+ * ── 统一响应外壳（契约规定，所有接口一致）──────────────────────────
+ *   成功：{ "ok": true,  "data": { ... }, "error": null }
+ *   失败：{ "ok": false, "data": null, "error": { "code": "...", "message": "..." } }
+ *
+ * ── ⚠️ 怎么连数据库（Day 17 定的方案，跟最初设想不同）──────────────
+ * **不走 PostgreSQL 直连，走 CloudBase 的 HTTP API（PostgREST）**。
+ *
+ * 为什么改：直连要「主机 + 端口 + 账号 + 密码」四样东西，而新版控制台
+ * **不展示数据库连接串**（密码属于凭据，平台设计上就不通过 API 外露），
+ * 加上 HTTP 云函数不会自动注入连接信息 —— 这条路在控制台拿不到入口。
+ *
+ * 现在走的路：控制台给它建一个**服务端 API Key**，云函数拿这个 Key
+ * 调 PostgREST 接口读写数据。好处：
+ *   · 不需要数据库密码，也不用手抄主机地址
+ *   · **零依赖**（用 Node 20 内置的 fetch）—— 部署包很小，冷启动快
+ *   · Key 可随时撤销、可设有效期
+ *
+ * ⚠️ 唯一的凭据是环境变量 **TCB_API_KEY**，配在云函数的环境变量里，
+ *    **不写在代码里、不进仓库**。
  * ─────────────────────────────────────────────────────────────────
  */
 
 const http = require('http')
 
-const PORT = 9000 // ⚠️ 平台硬性要求，改成别的跑不起来
-const HOST = '0.0.0.0' // 必须绑 0.0.0.0，绑 127.0.0.1 外面访问不到
+const PORT = 9000 // ⚠️ 平台硬性要求，改了跑不起来
+const HOST = '0.0.0.0'
 
-/* 响应内容单独提出来，方便对照"返回的到底是不是它" */
-const BODY = Object.freeze({
-  ok: true,
-  service: 'model',
-})
+/* 环境 ID：不是秘密（它只是个标识），给个默认值方便本地调试；
+   换环境时可以用环境变量覆盖。 */
+const ENV_ID = process.env.TCB_ENV_ID || 'model-d5gisaem106ad6a18'
 
-/* 这两个路径都返回同一个结果 —— 这是**故意留的容错**：
- * 在控制台给函数配了访问路径 /api/health 之后，网关有两种可能的行为：
- *   ① 把完整路径 /api/health 原样传给函数
- *   ② 把路径前缀剥掉，只传 "/"
- * 到底哪种，各环境配置不同、官方也没写死。
- * 与其猜，不如两个都认 —— 这样不管走哪条分支，这个接口都通。 */
-const OK_PATHS = new Set(['/', '/api/health'])
+/* 数据库 HTTP API 的根地址（PostgREST 风格：/v1/rdb/rest/<表名>） */
+const REST_BASE = `https://${ENV_ID}.api.tcloudbasegateway.com/v1/rdb/rest`
 
-/** 统一的 JSON 响应：显式设置 Content-Type，避免被当成纯文本 */
-function sendJson(res, statusCode, data) {
-  const text = JSON.stringify(data)
-  res.writeHead(statusCode, {
+/* 默认返回条数 */
+const DEFAULT_ITEMS_LIMIT = 500
+const MAX_ITEMS_LIMIT = 1000
+const DEFAULT_HISTORY_LIMIT = 20
+const MAX_HISTORY_LIMIT = 200
+
+/* ── 读数据库 ─────────────────────────────────────────────────────── */
+
+/**
+ * 查一张表。
+ * @param {string} table  表名（**只允许代码里写死的字面量**，绝不能用用户输入）
+ * @param {object} params PostgREST 查询参数，如 { select, order, limit }
+ *
+ * ⚠️ 关于"参数化"：这里的参数是**用 URLSearchParams 拼的**，它会自动做
+ *    URL 编码 —— 用户传进来的值（比如 ?limit=）不可能变成 SQL 片段。
+ *    表名和列名都是代码里写死的字面量。所以不存在注入风险。
+ */
+async function queryTable(table, params) {
+  const url = new URL(`${REST_BASE}/${table}`)
+  for (const [key, value] of Object.entries(params)) {
+    if (value !== undefined && value !== null && value !== '') {
+      url.searchParams.set(key, value)
+    }
+  }
+
+  const apiKey = process.env.TCB_API_KEY
+  if (!apiKey) {
+    const err = new Error('没有配置 TCB_API_KEY（云函数环境变量里缺这个）')
+    err.code = 'NO_API_KEY'
+    throw err
+  }
+
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      Accept: 'application/json',
+    },
+  })
+
+  const text = await res.text()
+  if (!res.ok) {
+    const err = new Error(`查 ${table} 失败：HTTP ${res.status} ${text.slice(0, 300)}`)
+    err.code = 'DB_QUERY_FAILED'
+    throw err
+  }
+
+  try {
+    return JSON.parse(text)
+  } catch {
+    throw new Error(`查 ${table} 返回的不是 JSON：${text.slice(0, 200)}`)
+  }
+}
+
+/* ── 统一响应工具 ─────────────────────────────────────────────────── */
+
+/** 成功：{ ok: true, data, error: null } */
+function sendOk(res, data, status = 200) {
+  send(res, status, { ok: true, data, error: null })
+}
+
+/** 失败：{ ok: false, data: null, error: { code, message } } */
+function sendErr(res, status, code, message) {
+  send(res, status, { ok: false, data: null, error: { code, message } })
+}
+
+function send(res, status, body) {
+  const text = JSON.stringify(body)
+  res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Content-Length': Buffer.byteLength(text),
     'Cache-Control': 'no-store',
@@ -50,19 +122,76 @@ function sendJson(res, statusCode, data) {
   res.end(text)
 }
 
-const server = http.createServer((req, res) => {
+/** 把 ?limit= 解析成一个安全的整数 */
+function parseLimit(raw, fallback, max) {
+  if (raw === null || raw === undefined || raw === '') return fallback
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n <= 0) return fallback
+  return Math.min(Math.floor(n), max) // 卡上限：防止有人传 999999
+}
+
+/* ── 各接口的实现 ─────────────────────────────────────────────────── */
+
+/** GET /api/health —— 不查库，只回答"活着" */
+function handleHealth(res) {
+  sendOk(res, { service: 'model' })
+}
+
+/** GET /api/items —— 读全部候选条目 */
+async function handleItems(res, url) {
+  const limit = parseLimit(url.searchParams.get('limit'), DEFAULT_ITEMS_LIMIT, MAX_ITEMS_LIMIT)
+
+  const rows = await queryTable('items', {
+    select: 'id,name,type,platform,spicy,tags,source,created_at',
+    order: 'id',
+    limit: String(limit),
+  })
+
+  sendOk(res, { items: rows, total: rows.length })
+}
+
+/** GET /api/history —— 读历史记录，按时间倒序 */
+async function handleHistory(res, url) {
+  const limit = parseLimit(url.searchParams.get('limit'), DEFAULT_HISTORY_LIMIT, MAX_HISTORY_LIMIT)
+
+  const rows = await queryTable('history', {
+    select: 'id,item_id,item_name,drawn_at',
+    order: 'drawn_at.desc',
+    limit: String(limit),
+  })
+
+  sendOk(res, { entries: rows, total: rows.length })
+}
+
+/* ── 路由 ─────────────────────────────────────────────────────────── */
+
+/* 每条路径都认"带 /api 前缀"和"不带"两种写法 —— 网关是否把前缀透传给函数
+   各环境配置不同，两个都认就不用担心这个问题。 */
+const ROUTES = [
+  { path: ['/', '/api/health'],          method: 'GET', fn: (res) => handleHealth(res) },
+  { path: ['/api/items', '/items'],      method: 'GET', fn: (res, url) => handleItems(res, url) },
+  { path: ['/api/history', '/history'],  method: 'GET', fn: (res, url) => handleHistory(res, url) },
+]
+
+const server = http.createServer(async (req, res) => {
   const url = new URL(req.url || '/', 'http://127.0.0.1')
 
-  // 日志：在控制台「日志」里能看到，用来确认这次请求真的打进来了、路径是什么
-  console.log('[api]', req.method, url.pathname)
+  // 日志：控制台「日志」里能看到，排查时是第一现场
+  console.log('[api]', req.method, url.pathname, url.search || '')
 
-  if (req.method === 'GET' && OK_PATHS.has(url.pathname)) {
-    sendJson(res, 200, BODY)
-    return
+  try {
+    const hit = ROUTES.find(
+      (r) => r.method === req.method && r.path.includes(url.pathname)
+    )
+    if (!hit) {
+      return sendErr(res, 404, 'NOT_FOUND', `没有这个接口：${req.method} ${url.pathname}`)
+    }
+    await hit.fn(res, url)
+  } catch (err) {
+    console.error('[api] 处理失败', err)
+    const detail = err && err.message ? err.message : '未知错误'
+    return sendErr(res, 500, 'INTERNAL_ERROR', `服务端出错：${detail}`)
   }
-
-  // 其余一律 404 —— 今天只有 health 一个接口，不做多余的事
-  sendJson(res, 404, { error: 'Not Found', path: url.pathname })
 })
 
 server.listen(PORT, HOST, () => {

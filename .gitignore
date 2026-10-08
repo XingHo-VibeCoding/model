@@ -12,3 +12,9 @@ dist/
 .DS_Store
 Thumbs.db
 *.log
+
+# 部署时用的本地配置（里面带 API Key，绝不入库）；入库的那份叫 cloudbaserc.json
+cloudbaserc.deploy.json
+
+# npm 的产物：云函数现在零依赖，这两个都是残留
+package-lock.json

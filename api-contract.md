@@ -103,11 +103,34 @@
 | # | 路径 | 方法 | 干什么 | 今天状态 |
 |---|---|---|---|---|
 | 0 | `/api/health` | GET | 健康检查 | ✅ **已实现并验证** |
-| 1 | `/api/items` | GET | **读取全部条目**（首页 + 清单页共用） | 待实现 |
-| 2 | `/api/items` | POST | 新增一个条目 | 待实现 |
-| 3 | `/api/items/:id` | DELETE | 删除一个条目 | 待实现 |
-| 4 | `/api/items/restore` | POST | 恢复默认库（把内置条目补回来） | 待实现 |
-| 5 | `/api/history` | GET | 读取历史记录（最多 20 条） | 待实现 |
+| 1 | `/api/items` | GET | **读取全部条目**（首页 + 清单页共用） | ✅ **已实现并验证**（Day 17） |
+| 2 | `/api/items` | POST | 新增一个条目 | 待实现（Day 18） |
+| 3 | `/api/items/:id` | DELETE | 删除一个条目 | 待实现（Day 18） |
+| 4 | `/api/items/restore` | POST | 恢复默认库（把内置条目补回来） | 待实现（Day 18） |
+| 5 | `/api/history` | GET | 读取历史记录（最多 20 条） | ✅ **已实现并验证**（Day 17） |
+
+**两个读接口的公网地址**（Day 17 实测可用）：
+```
+https://model-d5gisaem106ad6a18-1500042790.ap-shanghai.app.tcloudbase.com/api/items
+https://model-d5gisaem106ad6a18-1500042790.ap-shanghai.app.tcloudbase.com/api/history
+```
+
+### ⚠️ 实现方式的改变（Day 17，重要）
+
+契约里写的是**接口的形状**，不规定怎么实现。但这里记一笔，免得以后有人按"SQL 直连"去找：
+
+**原计划**：云函数用 `pg` 直连 PostgreSQL（需要 主机+端口+账号+密码）。
+**实际采用**：云函数用 **CloudBase 的 HTTP API（PostgREST）** 读写数据。
+
+**为什么改**：新版控制台**不展示数据库连接串**（密码属于凭据，平台设计上不通过 API 外露），
+而 HTTP 云函数也不会自动注入连接信息 —— 那条路在控制台拿不到入口。
+
+**现在的方式**：
+- 控制台给环境建一个**服务端 API Key**（可撤销、可设有效期）
+- Key 放在云函数的**环境变量 `TCB_API_KEY`** 里（不进代码、不进仓库）
+- 云函数调 `https://<envId>.api.tcloudbasegateway.com/v1/rdb/rest/<表名>`
+
+**顺带得到两个好处**：**零依赖**（用 Node 20 内置 fetch，不用装 pg）+ 部署包很小、冷启动快。
 
 ### 明确**不做**的（今天登记这个决定，免得第 3 周漏掉）
 
@@ -126,24 +149,37 @@
 ### 统一约定
 
 - **响应格式**：一律 JSON，`Content-Type: application/json; charset=utf-8`
-- **字段命名**：`snake_case`（跟数据库列名一致，省一层映射）
-- **时间格式**：ISO 8601 字符串，带时区（如 `2026-10-03T23:30:00+08:00`）
-- **错误格式**（所有接口统一，前端只写一套错误处理）：
+- **响应外壳**：⭐ **所有接口统一 `{ ok, data, error }` 三件套**（不管成功还是失败，形状都一样）：
 
 ```json
-{
-  "error": {
-    "code": "INVALID_NAME",
-    "message": "名称长度需要在 1–20 字之间"
-  }
-}
+// 成功
+{ "ok": true,  "data": { "...": "..." }, "error": null }
+
+// 失败
+{ "ok": false, "data": null, "error": { "code": "INVALID_NAME", "message": "名称长度需要在 1–20 字之间" } }
 ```
+
+> **为什么要统一**（Day 17 加的这一条）：
+> 前端只需要写**一套**解析和错误处理，不用给每个接口单独写判断。
+> 加字段（分页、统计）时也只往 `data` 里塞，**外壳永远不动**。
+>
+> ⚠️ **这是 Day 17 改掉的地方**：原先各接口的响应是"各自为政"的
+> （`GET /api/items` 直接把 `{items, total}` 铺在顶层、`/api/health` 是 `{ok, service}`），
+> **形状不统一** —— 前端要写三套解析。现在全部收进 `data`。
+>
+> ⚠️ `ok` 与 HTTP 状态码**不矛盾**，它们是两层：
+> `ok` 说"业务上成没成"，HTTP 状态码说"这次请求传输层怎么样"。
+> 失败时两个一起给（如 `400` + `ok:false`）。
+
+- **字段命名**：`snake_case`（跟数据库列名一致，省一层映射）
+- **时间格式**：ISO 8601 字符串，带时区（如 `2026-10-03T23:30:00+08:00`）
 
 | HTTP 状态码 | 什么时候用 |
 |---|---|
 | `200` | 成功 |
 | `400` | 请求参数不对（前端的问题） |
 | `404` | 找不到（如删一个不存在的 id） |
+| `409` | 冲突（如重名） |
 | `500` | 服务端出错（我们的问题） |
 
 ---
@@ -156,7 +192,7 @@
 
 **响应** `200`：
 ```json
-{ "ok": true, "service": "model" }
+{ "ok": true, "data": { "service": "model" }, "error": null }
 ```
 
 **公网地址**：
@@ -175,29 +211,33 @@ https://model-d5gisaem106ad6a18-1500042790.ap-shanghai.app.tcloudbase.com/api/he
 **响应** `200`：
 ```json
 {
-  "items": [
-    {
-      "id": "b38",
-      "name": "张亮麻辣烫",
-      "type": "shop",
-      "platform": "mt",
-      "spicy": "medium",
-      "tags": ["香菜"],
-      "source": "builtin",
-      "created_at": "2026-10-04T10:00:00+08:00"
-    }
-  ],
-  "total": 12
+  "ok": true,
+  "data": {
+    "items": [
+      {
+        "id": "b38",
+        "name": "张亮麻辣烫",
+        "type": "shop",
+        "platform": "mt",
+        "spicy": "medium",
+        "tags": ["香菜"],
+        "source": "builtin",
+        "created_at": "2026-10-04T10:00:00+08:00"
+      }
+    ],
+    "total": 12
+  },
+  "error": null
 }
 ```
 
 > ⚠️ 上面的示例值取自**真实种子数据**（`db/seed.sql` 里的 `b38`），
 > 不是编的 —— 免得看契约的人以为 id 长成 `b-001` 那样、去照着写代码。
 
-> 用对象包一层（而不是直接返回数组）：以后要加分页、加统计，
-> 直接加字段就行，**不用改响应结构、不用改前端解析**。
+> `data` 里用对象包一层（而不是直接给数组）：以后要加分页、加统计，
+> 直接往 `data` 里加字段就行，**外壳和前端解析都不用动**。
 
-**错误**：`500`（读库失败）
+**错误**：`500`（读库失败）—— 形状照旧，`{ "ok": false, "data": null, "error": {...} }`
 
 ---
 
@@ -228,7 +268,27 @@ https://model-d5gisaem106ad6a18-1500042790.ap-shanghai.app.tcloudbase.com/api/he
 > 重名会被数据库拒掉。接口层要把它翻译成 `409`，别让它变成 `500`。
 > （原先这里写的是"待定/见第七节"，表建完之后就过时了 —— 属于契约与数据库对不上。）
 
-**响应** `201`：返回新建的那一条（含生成的 `id`、`source` 固定为 `user`）
+**响应** `201`：
+```json
+{
+  "ok": true,
+  "data": {
+    "item": {
+      "id": "3f2a9c1e-5b7d-4a8f-9e0c-1d2b3c4d5e6f",
+      "name": "兰州拉面",
+      "type": "shop",
+      "platform": "mt",
+      "spicy": "any",
+      "tags": [],
+      "source": "user",
+      "created_at": "2026-10-08T23:10:00+08:00"
+    }
+  },
+  "error": null
+}
+```
+（`id` 由**数据库**生成 —— 建表时给了默认值 `gen_random_uuid()`；
+`source` 固定为 `user`，服务端定的，前端不用传。）
 
 **错误**：
 | 状态码 | code | 什么时候 |
@@ -248,7 +308,7 @@ https://model-d5gisaem106ad6a18-1500042790.ap-shanghai.app.tcloudbase.com/api/he
 
 **响应** `200`：
 ```json
-{ "deleted": "b01" }
+{ "ok": true, "data": { "deleted": "b01" }, "error": null }
 ```
 
 **错误**：`404` `NOT_FOUND`（这个 id 不存在）
@@ -266,7 +326,7 @@ https://model-d5gisaem106ad6a18-1500042790.ap-shanghai.app.tcloudbase.com/api/he
 
 **响应** `200`：
 ```json
-{ "restored": 0, "total": 12 }
+{ "ok": true, "data": { "restored": 0, "total": 12 }, "error": null }
 ```
 （`restored` = 这次补回来几条，`total` = 补完之后的条目总数。
 上面的 `0` 是"当前一条都不缺"时的真实结果。）
@@ -285,11 +345,15 @@ https://model-d5gisaem106ad6a18-1500042790.ap-shanghai.app.tcloudbase.com/api/he
 **响应** `200`：
 ```json
 {
-  "entries": [
-    { "id": 1, "item_id": "b38", "item_name": "张亮麻辣烫", "drawn_at": "2026-10-04T12:30:00+08:00" },
-    { "id": 8, "item_id": null,  "item_name": "已删掉的那家店", "drawn_at": "2026-10-01T11:30:00+08:00" }
-  ],
-  "total": 8
+  "ok": true,
+  "data": {
+    "entries": [
+      { "id": 1, "item_id": "b38", "item_name": "张亮麻辣烫", "drawn_at": "2026-10-04T12:30:00+08:00" },
+      { "id": 8, "item_id": null,  "item_name": "已删掉的那家店", "drawn_at": "2026-10-01T11:30:00+08:00" }
+    ],
+    "total": 8
+  },
+  "error": null
 }
 ```
 
