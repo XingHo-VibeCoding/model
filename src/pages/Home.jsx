@@ -38,7 +38,10 @@ const SPICY_ORDER = { none: 0, mild: 1, medium: 2, hot: 3 }
 
 export default function Home({
   rec, // { status, item, candidateCount, itemCount }
-  demoOverride, // 演示状态（地址栏 ?demo=）—— 有值就盖掉下面算出来的真实状态
+  stateOverride, // 盖掉下面算出来的状态（来源：?demo= 人工指定，或启动阶段的真实 loading / error）
+  errorActions, // 启动失败时错误页上的按钮（没有就用默认的「重试」）
+  errorText, // 启动失败的具体原因（连不上 / 超时）—— 不传就用默认那句
+  onRetry, // 「重试」点它 = 重新向服务器要数据
   candidates, // 当前候选（已过辣度与忌口）
   filter,
   updatedAt,
@@ -49,13 +52,14 @@ export default function Home({
   const platformFilter = filter?.platformFilter ?? PLATFORM_FILTER_ALL
   const typeFilter = filter?.typeFilter ?? TYPE_FILTER_ALL
 
-  /* 四种状态：**演示参数优先，否则按自己的真实数据算**。
+  /* 四种状态：**覆盖值优先，否则按自己的真实数据算**。
      ⚠️ 状态由每个页面自己算（不统一在 App 里算）——
         拿首页的状态去套清单页会出现"首页候选为 0 → 清单页也显示空态"这种张冠李戴。
-     能自然发生的只有 success 和 empty；loading / error 在本地数据架构下遇不到，
-     是给第 3 周接真实 API 预留的位置（用页脚的「状态演示」开关人工调出来看）。 */
+     ⭐ Day 17 之后，上面这四种**全都会自然发生**：
+        loading（正在向服务器取数）/ error（取不到）由启动阶段给，
+        success / empty 由首页自己的推荐结果算。 */
   const viewState =
-    demoOverride ?? (rec.status === 'empty' ? VIEW_STATE.empty : VIEW_STATE.success)
+    stateOverride ?? (rec.status === 'empty' ? VIEW_STATE.empty : VIEW_STATE.success)
 
   /* 网格里显示什么：候选 → 套一层「类别 / 平台」筛选 → 再按**口味偏好**排序。
      注意 platform === 'any'（用户自己加的、没标平台）在选了某个平台时**照样显示** ——
@@ -160,6 +164,9 @@ export default function Home({
 
       <ViewState
         state={viewState}
+        /* 启动失败时用它（重试加载 / 先用缓存看）；没有它就用 onRetry 那个「重试」 */
+        errorActions={errorActions}
+        errorText={errorText}
         onRetry={onDraw}
         emptyTitle={filteredOut ? '条件太严了，要不要放宽' : '清单还是空的'}
         emptyText={

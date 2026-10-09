@@ -1,4 +1,5 @@
 import { PLATFORM_LABEL, SPICY_LABEL, TYPE_LABEL } from '../lib/constants.js'
+import { platformSearchLabel, platformSearchUrl } from '../lib/platformLink.js'
 
 /* 一张卡片 = 一个条目（店 / 菜）。
    这个组件对应 Day 8 清单里的「余力加练：可复用卡片组件」——
@@ -22,16 +23,37 @@ export default function FoodCard({ item, variant = 'default', footer }) {
   const platform = item.platform ?? 'any'
   const platformText = PLATFORM_LABEL[platform] ?? PLATFORM_LABEL.any
 
+  /* 「去平台搜」的跳转入口（Day 17）。
+     没标平台的（`any` = 用户自己加的、没指定）→ null → 保持原来的纯装饰徽标，
+     **不瞎猜一个平台替他决定**。逻辑和理由见 lib/platformLink.js。 */
+  const searchUrl = platformSearchUrl(platform, item.name)
+  const searchLabel = platformSearchLabel(platform, item.name, platformText)
+
   return (
     <article className={variant === 'hero' ? 'food-card hero' : 'food-card'}>
       <div className="food-card-head">
         <h3 className="food-card-name">{item.name}</h3>
-        <span
-          className={platform === 'any' ? 'food-card-platform muted' : 'food-card-platform'}
-          title={platform === 'any' ? '没有标平台，两个平台都能找' : `去${platformText}搜这家店`}
-        >
-          {platformText}
-        </span>
+        {searchUrl ? (
+          <a
+            className="food-card-platform"
+            href={searchUrl}
+            /* 出站开新窗口 —— 用户想回来时我们的页面还在原地（见 platformLink.js） */
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={searchLabel}
+            title={searchLabel}
+          >
+            {platformText}
+            {/* 小箭头 = "点了会离开本页"。光靠颜色和文字，用户看不出来 */}
+            <span className="platform-go" aria-hidden="true">
+              ↗
+            </span>
+          </a>
+        ) : (
+          <span className="food-card-platform muted" title="没有标平台，两个平台都能找">
+            {platformText}
+          </span>
+        )}
       </div>
 
       <div className="food-card-badges">

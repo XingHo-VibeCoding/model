@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   addItem,
+  adoptServerData,
   appendHistory,
   getFilter,
   getHistory,
@@ -11,6 +12,7 @@ import {
   restoreBuiltin,
   setFilter,
 } from './lib/storage.js'
+import { fetchHistory, fetchItems } from './lib/api.js'
 import { applyFilter, collectTags } from './lib/filter.js'
 import { describeError, fetchNextResult } from './lib/drawService.js'
 import { SPICY_ANY, TAG_PRESETS, VIEW_STATE } from './lib/constants.js'
@@ -36,10 +38,13 @@ function readHash() {
 /* ── 「状态演示」开关（Day 13）────────────────────────────────────────
    地址栏加 ?demo=normal ｜ empty ｜ loading ｜ error。
 
-   为什么要留它：数据全部来自 localStorage，是同步读取、不联网的 ——
-   「加载中」和「错误」这两种状态**本来就遇不到**。它们是给第 3 周接真实 API
-   预留的位置；在那之前，只能手动把它们调出来看一眼，
-   免得放几个月没人管、接上 API 那天才发现样式全不对。
+   它当初是个"补丁"：Day 13 时数据全在 localStorage、同步读，
+   「加载中」和「错误」**物理上不可能发生**，只能这样手动调出来看一眼，
+   免得接 API 那天才发现样式全不对。
+
+   ⭐ Day 17 接口接上之后，这两种状态**自己就会发生**（见下面的 boot）——
+      这个开关于是退回它本来的用途：**验收时想单独看某一种状态**，
+      不用真的去断网或拔网线。
 
    ⚠️ 它**只给验收和开发用，不给用户看**：
       页脚那个下拉只在地址里带了 `?demo=` 时才出现 ——
@@ -80,6 +85,21 @@ export default function App() {
   })
   const [storageIssue, setStorageIssue] = useState(false)
 
+  /* ── 启动加载（Day 17）──────────────────────────────────────────────
+     数据源从「浏览器本地」换成了「云上的数据库」。过网络必然带来两件
+     本地同步读取没有的事 —— **要等** 和 **可能失败**。
+
+     ⚠️ 这两件事正好就是 Day 13 预留的 loading / error 两态。
+        当时数据在 localStorage、同步读，它们**物理上不可能发生**；
+        今天接口接上了，它们第一次**真的发生**，而样式和文案一个字没改。
+
+     fromCache = 启动失败后用户选了「先用缓存看」，页面顶部会挂一条提示。 */
+  const [boot, setBoot] = useState({
+    status: VIEW_STATE.loading,
+    error: null,
+    fromCache: false,
+  })
+
   /* 演示状态（地址栏 ?demo=）。放成 state 而不是每次读地址栏 ——
      这样页脚那个下拉一改，界面立刻跟着变。 */
   const [demoState, setDemoState] = useState(readDemoState)
@@ -109,6 +129,41 @@ export default function App() {
     setHistory(getHistory())
     setUpdatedAt(getMeta().updatedAt)
   }, [])
+
+  /* 向服务器要数据 → 灌进本地存储 → 刷新界面。
+     灌进存储（而不是让页面直接读接口返回值）的理由见 storage.js 的 adoptServerData：
+     **页面代码一行都不用改**，数据从哪来这件事被挡在了数据层里面。
+
+     两个接口并发拉，比串行快一倍 —— 首屏首页和页脚都要用这两份数据。 */
+  const loadFromServer = useCallback(async () => {
+    setBoot({ status: VIEW_STATE.loading, error: null, fromCache: false })
+    try {
+      const [itemsRes, historyRes] = await Promise.all([fetchItems(), fetchHistory()])
+      adoptServerData({ items: itemsRes.items, history: historyRes.entries })
+      sync()
+      setBoot({ status: VIEW_STATE.success, error: null, fromCache: false })
+    } catch (err) {
+      // 打日志：真出问题时控制台里能看到是哪一步断的（网络 / 接口 / 解析）
+      console.error('[boot] 启动加载失败', err)
+      setBoot({
+        status: VIEW_STATE.error,
+        error: err?.message || '连不上服务器。',
+        fromCache: false,
+      })
+    }
+  }, [sync])
+
+  useEffect(() => {
+    loadFromServer()
+  }, [loadFromServer])
+
+  /* 启动失败时的第二条出路：不重试了，用上次成功加载留下的缓存继续。
+     走这里 boot 直接变 success —— 页面当加载成功，数据是本地那份。
+     顶部会挂一条提示说明"看的是缓存"，不假装是新的。 */
+  const useCacheAndContinue = useCallback(() => {
+    sync()
+    setBoot({ status: VIEW_STATE.success, error: null, fromCache: true })
+  }, [sync])
 
   useEffect(() => {
     const onChange = () => setHash(readHash())
@@ -217,10 +272,14 @@ export default function App() {
       drawnForRef.current = null
       return
     }
+    /* ⚠️ 数据没到位就不抽（Day 17 加的门）。
+       候选池这时还是空的、或者是上一次留下的旧数据 —— 抽出来的结果没有意义。
+       等 boot 变成 success，这个 effect 会自己再跑一次。 */
+    if (boot.status !== VIEW_STATE.success) return
     if (drawnForRef.current === hash) return
     drawnForRef.current = hash
     draw()
-  }, [hash, draw])
+  }, [hash, draw, boot.status])
 
   // ── 四个操作。改完数据立刻 sync，界面马上跟着变（C3 要求删除后数量立即更新）──
   const handleRemove = useCallback(
@@ -268,12 +327,16 @@ export default function App() {
     [items],
   )
 
-  /* ⚠️ 这里**不再**统一算四种状态，只把「演示覆盖值」往下传。
-     为什么：每个页面该看自己的数据 —— 首页看推荐抽取的结果，清单页看条目数量，
-     历史页看记录条数。拿首页的状态去套别的页面，会出现
-     "首页候选为 0 → 清单页也跟着显示空态"这种张冠李戴的错。
-     所以规则是：`页面自己算状态`，演示参数来了就覆盖掉。 */
-  const demoOverride = demoState
+  /* 覆盖页面上算出来的四种状态。优先级从高到低：
+       ① ?demo= 人工指定（验收时想单独看某一种状态，仍然用它）
+       ② 启动阶段的**真实状态**：正在取数 → loading；取不到 → error
+       ③ 都没有 → null，交回给各页面按自己的数据算（success / empty）
+
+     ⚠️ ② 是 Day 17 新增的。在此之前这里只有 ①，
+        因为那时数据在本地同步读，loading / error 不可能自然发生。 */
+  const stateOverride =
+    demoState ??
+    (boot.status === VIEW_STATE.success ? null : boot.status)
 
   /* 换演示状态：改 React 状态（界面立刻变）+ 同步地址栏（刷新后保持同一个状态）。
      用 replaceState 而不是改 location.search —— 后者会**刷新页面**，一闪一闪的不好看。 */
@@ -299,29 +362,56 @@ export default function App() {
 
   const page = PAGES.find((p) => p.hash === hash) ?? PAGES[0]
 
+  /* 启动失败时，错误页上给两条出路。三页共用同一份 ——
+     "取不到数据"是全局的事，不是某一页自己的毛病。 */
+  const bootErrorActions =
+    boot.status === VIEW_STATE.error ? (
+      <>
+        <button className="btn" type="button" onClick={loadFromServer}>
+          重试
+        </button>
+        <button className="btn ghost" type="button" onClick={useCacheAndContinue}>
+          先用缓存看
+        </button>
+      </>
+    ) : null
+
+  /* 失败原因也要传下去 —— 默认那句「等会儿再试一次」太笼统，
+     分不清是"断网"、"接口挂了"还是"超时"，而这三件事该做的事不一样。
+     具体的话在 api.js 里生成（连不上服务器 / 请求超时 / 服务器返回了预期之外的内容）。 */
+  const bootErrorText = boot.status === VIEW_STATE.error ? boot.error : undefined
+
   let content
   if (page.hash === '#/') {
-    // 首帧 rec 还是 idle（抽取在 effect 里跑，差一帧）。这里直接不渲染，
-    // 而不是把它当成「加载中」—— 那会让「loading 在本期触发不到」这句话变成假的。
-    content =
-      rec.status === 'idle' ? null : (
-        <Home
-          rec={rec}
-          demoOverride={demoOverride}
-          candidates={candidates}
-          filter={filter}
-          updatedAt={updatedAt}
-          onDraw={draw}
-          onRestore={handleRestoreHome}
-          onFilterChange={handleFilterChange}
-        />
-      )
+    /* 首页什么时候渲染：
+       · 启动中 / 启动失败 → **要渲染**，让 ViewState 把骨架屏或错误页显示出来
+       · 启动成功但 rec 还是 idle → 不渲染（抽取在 effect 里跑，差一帧）——
+         这一帧一闪而过，渲染它反而会闪一下空状态 */
+    const homeReady = boot.status !== VIEW_STATE.success || rec.status !== 'idle'
+    content = homeReady ? (
+      <Home
+        rec={rec}
+        stateOverride={stateOverride}
+        errorActions={bootErrorActions}
+        errorText={bootErrorText}
+        onRetry={loadFromServer}
+        candidates={candidates}
+        filter={filter}
+        updatedAt={updatedAt}
+        onDraw={draw}
+        onRestore={handleRestoreHome}
+        onFilterChange={handleFilterChange}
+      />
+    ) : null
   } else if (page.hash === '#/list') {
     content = (
       <List
         items={items}
         filter={filter}
-        demoOverride={demoOverride}
+        stateOverride={stateOverride}
+        errorActions={bootErrorActions}
+        errorText={bootErrorText}
+        onRetry={loadFromServer}
         onRemove={handleRemove}
         onRestore={handleRestore}
         onFilterChange={handleFilterChange}
@@ -330,7 +420,15 @@ export default function App() {
   } else if (page.hash === '#/add') {
     content = <Add tagOptions={addTagOptions} onAdd={handleAdd} />
   } else {
-    content = <History entries={history} demoOverride={demoOverride} />
+    content = (
+      <History
+        entries={history}
+        stateOverride={stateOverride}
+        errorActions={bootErrorActions}
+        errorText={bootErrorText}
+        onRetry={loadFromServer}
+      />
+    )
   }
 
   return (
@@ -357,6 +455,14 @@ export default function App() {
       {storageIssue && (
         <div className="banner">
           数据将无法保存（浏览器的本地存储不可用）。这次打开期间功能照常用，只是关掉页面后不会保留。
+        </div>
+      )}
+
+      {/* 用户选了「先用缓存看」之后挂一条提示 ——
+          不假装数据是新的，也不把人拦在门外。 */}
+      {boot.fromCache && (
+        <div className="banner">
+          没能连上服务器，当前显示的是上次加载留下的缓存。改动暂时只存在这台设备上。
         </div>
       )}
 

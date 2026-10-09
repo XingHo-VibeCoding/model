@@ -970,8 +970,15 @@ body {
   overflow-wrap: anywhere;
 }
 
-/* 平台标记 —— 它不是装饰，它回答「去哪个 App 搜这家店」（鼠标悬停有提示）*/
+/* 平台标记。两种身份，外观刻意做得很像：
+     · <a>（有明确平台）—— 是个**跳转入口**，点它去平台搜这家店（Day 17）
+     · <span class="muted">（没标平台）—— 纯装饰
+   区别靠箭头（↗）和鼠标指针，而不是靠"像不像按钮" —— 徽标变成大按钮会很突兀。 */
 .food-card-platform {
+  position: relative; /* 给下面那个 ::after 用 */
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   flex: none;
   padding: 2px 8px;
   border: 1px solid #f0c9a8;
@@ -980,7 +987,37 @@ body {
   color: var(--brand-ink);
   font-size: 12px;
   white-space: nowrap;
-  cursor: help;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+/* ⭐ 触控目标 ≥44px：徽标视觉上只有约 20px 高，但**点击区向外扩到 44px**。
+   为什么用伪元素而不是 padding：padding 会把卡片头部整个撑高，12 张卡一起变高。
+   伪元素扩的是"能点到的范围"，**不改布局** —— 视觉一个像素都没动。 */
+.food-card-platform::after {
+  content: '';
+  position: absolute;
+  left: -4px;
+  right: -4px;
+  top: 50%;
+  height: 44px;
+  transform: translateY(-50%);
+}
+
+/* 悬停：**刻意不改底色**。
+   第一版写的是换成 `--brand-lift` 底 + 原来的 `--brand-ink` 字 —— 实测对比度只有 **1.82:1**
+   （两个都是橙的，糊在一起），小字远达不到 4.5:1。
+   改用「边框加深 + 下划线」：这是链接最经典的"我能点"提示，而且**对比度一点没动**
+   （底色还是 `--brand-soft`，配 `--brand-ink` = 4.72:1 ✅）。 */
+.food-card-platform:hover {
+  border-color: var(--brand);
+  text-decoration: underline;
+}
+
+/* ↗ 只出现在能点的那个上，表示"点了会离开本页" */
+.platform-go {
+  font-size: 11px;
+  line-height: 1;
 }
 
 /* 没标平台的（用户自己加的）—— 视觉上退一步，对用户诚实 */
@@ -988,6 +1025,7 @@ body {
   background: #f4efe8;
   border-color: var(--line);
   color: var(--ink-3);
+  cursor: default;
 }
 
 .food-card-badges {

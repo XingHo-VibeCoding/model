@@ -14,15 +14,26 @@ import ViewState from '../components/ViewState.jsx'
    - 清单为空时给引导，不是空白（F1）
    **Day 13 补齐四种状态**：正常 / 空 / 加载中 / 错误都有人管（见下面的 state）。
    这个组件只负责显示和收集操作，数据都由 App 传进来。 */
-export default function List({ items, filter, demoOverride, onRemove, onRestore, onFilterChange }) {
+export default function List({
+  items,
+  filter,
+  stateOverride,
+  errorActions,
+  errorText,
+  onRetry,
+  onRemove,
+  onRestore,
+  onFilterChange,
+}) {
   const [customTag, setCustomTag] = useState('')
 
-  /* 四种状态：**演示参数优先，否则按自己的真实数据算**。
+  /* 四种状态：**覆盖值优先，否则按自己的真实数据算**。
      ⚠️ 状态由每个页面自己算 —— 清单页看的是"条目数量"，
         跟首页推荐抽取的结果是两码事，不能共用。
-     能自然发生的只有"正常"和"空"；加载中 / 错误在本地数据架构下遇不到，
-     是给第 3 周接真实 API 预留的位置（用页脚的「状态演示」调出来看）。 */
-  const state = demoOverride ?? (items.length === 0 ? VIEW_STATE.empty : VIEW_STATE.success)
+     ⭐ Day 17 之后四种都会自然发生：loading / error 由启动阶段给
+        （正在向服务器取数 / 取不到），success / empty 由条目数量算。 */
+  const state =
+    stateOverride ?? (items.length === 0 ? VIEW_STATE.empty : VIEW_STATE.success)
   const isBusy = state === VIEW_STATE.loading || state === VIEW_STATE.error
 
   const userCount = items.filter((it) => it.source === 'user').length
@@ -53,7 +64,14 @@ export default function List({ items, filter, demoOverride, onRemove, onRestore,
   /* 加载中 / 错误：交给统一的四态外壳（骨架屏 / 错误页 + 重试）。
      其余两种走下面的正常渲染 —— 空态仍用原来的 EmptyState，观感跟以前一模一样。 */
   if (isBusy) {
-    return <ViewState state={state} onRetry={onRestore} />
+    return (
+      <ViewState
+        state={state}
+        errorActions={errorActions}
+        errorText={errorText}
+        onRetry={onRetry}
+      />
+    )
   }
 
   const isEmpty = state === VIEW_STATE.empty

@@ -25,13 +25,22 @@ function formatTime(at) {
   return sameDay ? `今天 ${hm}` : `${d.getMonth() + 1}月${d.getDate()}日 周${WEEKDAYS[d.getDay()]} ${hm}`
 }
 
-export default function History({ entries, demoOverride }) {
-  /* 四种状态：**演示参数优先，否则按自己的真实数据算**（历史页看的是"记录条数"）。
-     能自然发生的是"正常"和"空"；加载中 / 错误是给第 3 周接真实 API 预留的位置。 */
-  const state = demoOverride ?? (entries.length === 0 ? VIEW_STATE.empty : VIEW_STATE.success)
+export default function History({ entries, stateOverride, errorActions, errorText, onRetry }) {
+  /* 四种状态：**覆盖值优先，否则按自己的真实数据算**（历史页看的是"记录条数"）。
+     ⭐ Day 17 之后四种都会自然发生 —— loading / error 来自启动阶段
+        （正在向服务器取数 / 取不到）。 */
+  const state =
+    stateOverride ?? (entries.length === 0 ? VIEW_STATE.empty : VIEW_STATE.success)
 
   if (state === VIEW_STATE.loading || state === VIEW_STATE.error) {
-    return <ViewState state={state} />
+    return (
+      <ViewState
+        state={state}
+        errorActions={errorActions}
+        errorText={errorText}
+        onRetry={onRetry}
+      />
+    )
   }
 
   if (state === VIEW_STATE.empty) {

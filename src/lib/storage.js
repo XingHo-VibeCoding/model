@@ -319,6 +319,61 @@ export function getHistory() {
   return Array.isArray(list) ? list : []
 }
 
+/* ── 接收服务端数据（Day 17 新增）─────────────────────────────────── */
+
+/**
+ * 把从接口拉回来的数据灌进本地存储。启动时调一次。
+ *
+ * ── 为什么是"灌进本地存储"，而不是"页面直接用接口数据" ──────────────
+ * 因为全项目读数据都走 loadItems() / getHistory()（抽签、筛选、恢复默认库
+ * 全都依赖它们）。灌进存储 = **页面代码一行都不用改** ——
+ * 数据从哪来这件事，被挡在了数据层里面。
+ *
+ * ── 合并规则：服务端当基线，但不吞掉本地的 ──────────────────────────
+ * · items  —— 服务端全量 + 本地用户自己加的（`source === 'user'`）。
+ *             为什么保留本地的：写入接口要到 Day 18 才有，用户这几天
+ *             自己加的条目还上不了云；不保留的话，一刷新就人间蒸发。
+ * · history —— 两边合并、按时间倒序、同名同时刻去重、只留最近 20 条。
+ *             ⚠️ `item_id` 可能是 null（那条记录对应的条目被删过）——
+ *             历史上显示的是 `name` 快照，所以照样显示得出来（PRD J4）。
+ *
+ * @param {{items?: Array, history?: Array}} payload 已转成本地形状的数据
+ * @returns {{items: number, history: number}} 灌完之后各有多少条
+ */
+export function adoptServerData({ items, history } = {}) {
+  ensureReady()
+
+  // ── items ──
+  const incoming = Array.isArray(items) ? items : []
+  const localUser = loadItems().filter((it) => it?.source === 'user')
+
+  const byId = new Map()
+  for (const it of incoming) {
+    if (it && it.id != null) byId.set(it.id, { ...it, tags: Array.isArray(it.tags) ? it.tags : [] })
+  }
+  for (const it of localUser) {
+    if (!byId.has(it.id)) byId.set(it.id, it)
+  }
+  const mergedItems = [...byId.values()]
+  writeRaw('items', mergedItems)
+
+  // ── history ──
+  const seen = new Set()
+  const merged = []
+  for (const e of [...getHistory(), ...(Array.isArray(history) ? history : [])]) {
+    if (!e || typeof e.name !== 'string') continue
+    const key = `${e.itemId ?? ''}|${e.name}|${e.at}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    merged.push(e)
+  }
+  merged.sort((a, b) => (b.at ?? 0) - (a.at ?? 0))
+  const trimmed = merged.slice(0, HISTORY_LIMIT)
+  writeRaw('history', trimmed)
+
+  return { items: mergedItems.length, history: trimmed.length }
+}
+
 /* ── 元信息 · 更新时间 ────────────────────────────────────────────── */
 
 /* 「更新时间」= **清单最后一次被改动的时刻**。

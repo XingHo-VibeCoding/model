@@ -112,6 +112,25 @@ function sendErr(res, status, code, message) {
   send(res, status, { ok: false, data: null, error: { code, message } })
 }
 
+/* ── 跨域（CORS）────────────────────────────────────────────────────
+   前端在 `xxx.tcloudbaseapp.com`（静态托管），接口在
+   `xxx.ap-shanghai.app.tcloudbase.com`（HTTP 网关）—— **不是同一个域名**，
+   所以浏览器一定会先问"这个源允许吗"。
+
+   ⚠️⚠️ 这件事**由网关负责，函数里千万不要自己加 Access-Control-Allow-Origin**。
+
+   Day 17 实测踩到的坑：函数里写了一行 `Access-Control-Allow-Origin: *`，
+   而网关自己也会加一个（回显请求的 Origin）。两边一拼，浏览器收到的是：
+
+       access-control-allow-origin: https://xxx.tcloudbaseapp.com,*
+
+   规范里这个头**只允许一个值或 `*`**，逗号列表会被判为无效 ——
+   结果是"明明两个地方都配了跨域，反而跨不过去"，而且报错信息指不到真正的原因。
+
+   所以：网关加，函数不加。删掉之后实测头就干净了。
+   （下面那个 OPTIONS 分支保留着 —— 本地直接 `node index.js` 调试时用得到。） */
+const NO_CORS_HERE = true // eslint-disable-line no-unused-vars —— 留个记号，别再往 send 里加跨域头
+
 function send(res, status, body) {
   const text = JSON.stringify(body)
   res.writeHead(status, {
@@ -178,6 +197,19 @@ const server = http.createServer(async (req, res) => {
 
   // 日志：控制台「日志」里能看到，排查时是第一现场
   console.log('[api]', req.method, url.pathname, url.search || '')
+
+  /* 浏览器跨域预检：不查库、不问业务，直接回「允许」。
+     线上这一步网关会先拦下来（见上面 CORS 的说明），所以这个分支
+     实际是给"本地直接 node index.js + 本地前端"这种调法兜底的。
+     ⚠️ 跨域头**只在这个分支里写**，不要搬到 send() 里去。 */
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Accept',
+    })
+    return res.end()
+  }
 
   try {
     const hit = ROUTES.find(
