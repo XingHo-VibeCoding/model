@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   PLATFORM_FILTER_ALL,
   PLATFORM_FILTER_LABEL,
@@ -15,6 +15,7 @@ import PageHeader from '../components/PageHeader.jsx'
 import FoodCard from '../components/FoodCard.jsx'
 import CardGrid from '../components/CardGrid.jsx'
 import ViewState from '../components/ViewState.jsx'
+import { useEmojiBurst } from '../components/EmojiBurst.jsx'
 
 /* 页面 1 · 首页（Day 8 重写版）
 
@@ -150,6 +151,49 @@ export default function Home({
     return () => clearTimeout(timer)
   }, [rec.item])
 
+  /* ── 「换一个」轮播挑选动画（从原型提取）──────────────────────────────
+     点击后进入 8 轮快速随机切换（每轮 80ms），营造「宇宙正在挑选」的仪式感，
+     最后调用真正的 onDraw 确定结果，并触发 emoji burst 粒子爆炸。 */
+  const burst = useEmojiBurst()
+  const drawBtnRef = useRef(null)
+  const [shuffling, setShuffling] = useState(false)
+  const [shuffleItem, setShuffleItem] = useState(null)
+
+  function handleDraw() {
+    if (shuffling || isSwapping || candidates.length === 0) return
+    setShuffling(true)
+    let count = 0
+    const interval = setInterval(() => {
+      const random = candidates[Math.floor(Math.random() * candidates.length)]
+      setShuffleItem(random)
+      count++
+      if (count >= 8) {
+        clearInterval(interval)
+        setShuffling(false)
+        setShuffleItem(null)
+        onDraw({ viaUser: true })
+        // 轮播结束后触发粒子爆炸
+        if (drawBtnRef.current) {
+          setTimeout(() => burst(drawBtnRef.current), 100)
+        }
+      }
+    }, 80)
+  }
+
+  /* 用户手动点击网格卡片挑出来的条目 —— 优先级高于自动抽取结果，
+     但低于轮播动画（轮播时手动挑选也要让位）。 */
+  const [manualPick, setManualPick] = useState(null)
+
+  // rec.item 变了（点了"换一个"有新结果）→ 清除手动挑选
+  useEffect(() => {
+    if (rec.item && manualPick && rec.item.id !== manualPick.id) {
+      setManualPick(null)
+    }
+  }, [rec.item])
+
+  // 轮播期间显示的条目（没有就用真正的推荐结果）
+  const displayItem = shuffling ? shuffleItem : (manualPick || rec.item)
+
   const filteredOut = rec.itemCount > 0
 
   return (
@@ -191,12 +235,12 @@ export default function Home({
         }
       >
         {/* ② 主推荐卡 */}
-        {rec.item && (
-          <section className={`hero-block result-swap${isFlash ? ' is-flash' : ''}`}>
+        {displayItem && (
+          <section className={`hero-block result-swap${isFlash && !shuffling ? ' is-flash' : ''}`}>
             {/* Day 10：「今天就吃这家」这句原本在这里当小标签，
                 已提到页头做大标题 —— 这里不再重复说一遍 */}
             <FoodCard
-              item={rec.item}
+              item={displayItem}
               variant="hero"
               footer={
                 <>
@@ -212,13 +256,14 @@ export default function Home({
                       "那连点会不会重复抽？" —— 不会：App.jsx 里的 drawingRef 就是干这个的
                       （当初特意留的第二道保险，正好在这里派上用场）。 */}
                   <button
+                    ref={drawBtnRef}
                     className="draw-btn"
                     type="button"
-                    onClick={() => onDraw({ viaUser: true })}
-                    aria-disabled={isSwapping || undefined}
-                    aria-busy={isSwapping || undefined}
+                    onClick={handleDraw}
+                    aria-disabled={isSwapping || shuffling || undefined}
+                    aria-busy={isSwapping || shuffling || undefined}
                   >
-                    {isSwapping ? '加载中…' : rec.status === 'error' ? '重试' : '换一个'}
+                    {shuffling ? '🔮 宇宙正在挑选…' : isSwapping ? '加载中…' : rec.status === 'error' ? '重试' : '🎲 换一个'}
                   </button>
 
                   {/* 结果反馈。role="status" 让屏幕阅读器也念出来 ——
@@ -305,7 +350,14 @@ export default function Home({
 
           <CardGrid
             items={gridItems}
-            renderItem={(item) => <FoodCard item={item} />}
+            renderItem={(item) => <FoodCard item={item} onClick={() => {
+              // 点击网格卡片：把该条目推为推荐结果（不重写历史），
+              // 并平滑滚动到顶部让用户看到 Hero 卡的变化
+              if (item && item.id !== displayItem?.id) {
+                setManualPick(item)
+                window.scrollTo({ top: 0, behavior: 'smooth' })
+              }
+            }} />}
             empty={<p className="hint">这一组没有符合条件的条目，换个类别或平台看看。</p>}
           />
 

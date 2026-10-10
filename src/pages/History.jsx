@@ -2,13 +2,15 @@ import { VIEW_STATE } from '../lib/constants.js'
 import EmptyState from '../components/EmptyState.jsx'
 import ViewState from '../components/ViewState.jsx'
 
-/* 页面 4 · 历史记录（PRD §5）
-   - 按时间倒序，最新的在最上面；每条显示**名称与时间**（J4）
-   - 最多 20 条，超出后最早的被移除 —— 这个「裁剪」在数据层做（storage.js），
-     界面这里只管显示，不重复实现一遍规则
-   - 没有记录时显示「还没有记录」，不是空白（J3）
-   - **删除条目不影响这里**：历史存的是当时的名称快照，从来不去回查条目（J4）
-   **Day 13 补齐四种状态**：正常 / 空 / 加载中 / 错误都有人管（见下面的 state）。 */
+/* 页面 4 · 历史记录（打破对称布局版）
+   ─────────────────────────────────────────────────────────────────────
+   抛弃传统的"垂直列表"模式，改为波浪形时间流：
+   · 页面左侧垂直大标题
+   · 记录项呈波浪形左右交替分布，形成视觉韵律
+   · 最新的记录最大最亮，越往下逐渐缩小变淡
+   · 时间线用一条弯曲的虚线串联
+   · 大量负空间，打破所有居中对称规则
+   ═══════════════════════════════════════════════════════════════════════ */
 
 const WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
 
@@ -26,9 +28,6 @@ function formatTime(at) {
 }
 
 export default function History({ entries, stateOverride, errorActions, errorText, onRetry }) {
-  /* 四种状态：**覆盖值优先，否则按自己的真实数据算**（历史页看的是"记录条数"）。
-     ⭐ Day 17 之后四种都会自然发生 —— loading / error 来自启动阶段
-        （正在向服务器取数 / 取不到）。 */
   const state =
     stateOverride ?? (entries.length === 0 ? VIEW_STATE.empty : VIEW_STATE.success)
 
@@ -54,26 +53,48 @@ export default function History({ entries, stateOverride, errorActions, errorTex
   }
 
   return (
-    <>
-      <div className="count-line">
-        共 <b>{entries.length}</b> 条 <span className="dim">（最多保留 20 条）</span>
+    <div className="history-universe">
+      {/* 左侧垂直大标题 */}
+      <div className="history-header">
+        <h1 className="history-title">历史</h1>
+        <p className="history-sub">{entries.length} 条记录</p>
+        <p className="history-hint">最多保留 20 条</p>
       </div>
 
-      <ul className="history-list">
-        {entries.map((entry, index) => (
-          <li className="history-row" key={entry.id}>
-            <span className="history-name">{entry.name}</span>
-            <span className="history-time">
-              {index === 0 && <span className="badge newest">最新</span>}
-              {formatTime(entry.at)}
-            </span>
-          </li>
-        ))}
-      </ul>
+      {/* 波浪形时间流 */}
+      <div className="history-wave">
+        {/* 弯曲的时间线 */}
+        <div className="history-wave-line" aria-hidden="true" />
 
-      <p className="dim center">
+        {entries.map((entry, index) => {
+          const isLeft = index % 2 === 0
+          const scale = Math.max(0.75, 1 - index * 0.04)
+          const opacity = Math.max(0.5, 1 - index * 0.03)
+
+          return (
+            <div
+              key={entry.id}
+              className={`history-wave-item ${isLeft ? 'wave-left' : 'wave-right'}`}
+              style={{
+                animationDelay: `${index * 80}ms`,
+                opacity,
+              }}
+            >
+              <div className="history-wave-card" style={{ transform: `scale(${scale})` }}>
+                <span className="history-wave-name">{entry.name}</span>
+                <span className="history-wave-time">
+                  {index === 0 && <span className="badge newest">最新</span>}
+                  {formatTime(entry.at)}
+                </span>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+
+      <p className="history-note">
         这里记的是「发生过的事」—— 把某个条目从清单里删掉，它在这一页仍然留着。
       </p>
-    </>
+    </div>
   )
 }

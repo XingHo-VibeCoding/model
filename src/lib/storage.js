@@ -190,10 +190,15 @@ export function loadItems() {
   return Array.isArray(items) ? items : []
 }
 
-/* 返回 { ok, reason? , item? }，让界面自己决定怎么提示 */
-export function addItem(input = {}) {
-  ensureReady()
+/* 只做「格式校验 + 字段规范化」，**不写盘、不查重**。
 
+   为什么单独拆成一个函数：页面 3「添加」现在走接口了 ——
+   它需要在**发请求之前**先拦掉明显的错误（空名称、超长、没选类型），
+   这些不用等网络就有答案；而**重名交给后端判**
+   （本地那份清单可能不是最新的，比如别处刚加过同名）。
+
+   返回：不合格 `{ ok:false, reason }`；合格 `{ ok:true, fields:{...} }` */
+export function validateNewItem(input = {}) {
   const name = normalizeName(input.name)
   if (!name) return { ok: false, reason: 'empty' } // D1：空 / 全空格
   if (charLength(name) > NAME_MAX) return { ok: false, reason: 'too-long' } // D2
@@ -201,30 +206,63 @@ export function addItem(input = {}) {
   const { type } = input
   if (type !== 'dish' && type !== 'shop') return { ok: false, reason: 'no-type' } // D1
 
-  const items = loadItems()
-  if (items.some((it) => normalizeName(it.name) === name)) {
-    return { ok: false, reason: 'duplicate' } // D3：去空格后同名
-  }
-
   const tags = Array.isArray(input.tags)
     ? input.tags.map((t) => String(t).trim()).filter(Boolean)
     : []
 
-  const item = {
-    id: makeId('u'),
-    name,
-    type,
-    /* 不填就是「不限」→ 这类条目永远不会被过滤掉（PRD §5.1）。
-       平台同理：用户没说他在哪个平台点，就不该因为平台筛选被排除。 */
-    platform: PLATFORMS.includes(input.platform) ? input.platform : 'any',
-    spicy: SPICY_LEVELS.includes(input.spicy) ? input.spicy : SPICY_ANY,
-    tags,
-    source: 'user',
+  return {
+    ok: true,
+    fields: {
+      name,
+      type,
+      /* 不填就是「不限」→ 这类条目永远不会被过滤掉（PRD §5.1）。
+         平台同理：用户没说他在哪个平台点，就不该因为平台筛选被排除。 */
+      platform: PLATFORMS.includes(input.platform) ? input.platform : 'any',
+      spicy: SPICY_LEVELS.includes(input.spicy) ? input.spicy : SPICY_ANY,
+      tags,
+    },
+  }
+}
+
+/* 本地新增一条 —— **没接后端时的老路径**，也是全项目唯一会自己造 id 的地方。
+   接上接口之后，页面 3 走的是 validateNewItem + appendItem。
+   这个函数留着给离线 / 测试用。
+   返回 { ok, reason?, item? }，让界面自己决定怎么提示 */
+export function addItem(input = {}) {
+  ensureReady()
+
+  const v = validateNewItem(input)
+  if (!v.ok) return v
+
+  const items = loadItems()
+  if (items.some((it) => normalizeName(it.name) === v.fields.name)) {
+    return { ok: false, reason: 'duplicate' } // D3：去空格后同名
   }
 
+  const item = { id: makeId('u'), ...v.fields, source: 'user' }
   writeRaw('items', [...items, item])
   touchUpdatedAt()
   return { ok: true, item }
+}
+
+/* 把**服务端返回的那一条**原样收进本地清单（页面 3 接接口之后走这里）。
+
+   为什么不复用 addItem：addItem 会**自己造 id**（`makeId('u')`）。
+   可接了接口之后，id / created_at 是**数据库生成的** —— 本地再造一个就和云端对不上了，
+   以后按 id 删除 / 更新会全错。所以这里只做一件事：**服务端给什么就收什么**。
+
+   返回 true = 真写进去了；false = 没写（不是对象 / 没 id / 本地已经有这条了）。 */
+export function appendItem(item) {
+  ensureReady()
+  if (!item || typeof item !== 'object' || !item.id) return false
+
+  const items = loadItems()
+  // 防重：万一这条已经在本地了（比如失败后重试过），不要塞两遍
+  if (items.some((it) => it.id === item.id)) return false
+
+  writeRaw('items', [...items, item])
+  touchUpdatedAt()
+  return true
 }
 
 /* 删条目。注意：不碰历史记录 —— 历史是「发生过的事」（PRD J4） */

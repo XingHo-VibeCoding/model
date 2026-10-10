@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
-  addItem,
   adoptServerData,
   appendHistory,
+  appendItem,
   getFilter,
   getHistory,
   getMeta,
@@ -11,8 +11,9 @@ import {
   removeItem,
   restoreBuiltin,
   setFilter,
+  validateNewItem,
 } from './lib/storage.js'
-import { fetchHistory, fetchItems } from './lib/api.js'
+import { createItem, fetchHistory, fetchItems } from './lib/api.js'
 import { applyFilter, collectTags } from './lib/filter.js'
 import { describeError, fetchNextResult } from './lib/drawService.js'
 import { SPICY_ANY, TAG_PRESETS, VIEW_STATE } from './lib/constants.js'
@@ -20,6 +21,7 @@ import Home from './pages/Home.jsx'
 import List from './pages/List.jsx'
 import Add from './pages/Add.jsx'
 import History from './pages/History.jsx'
+import NebulaCanvas from './components/NebulaCanvas.jsx'
 
 // 四个页面。路由方式见 TECH_DESIGN.md §8.2：
 // 用 hash 路由，因为 PRD 的 J3 要求「不经过首页刷新直接进入历史记录页」
@@ -311,11 +313,32 @@ export default function App() {
     [sync],
   )
 
+  /* 「添加」页提交 → **写到云端**（Day 18 接上接口）。
+
+     分两步，各有各的道理：
+       ① 本地校验格式：空名称 / 超长 / 没选类型 —— 不用等网络就能拦掉，反馈最快；
+       ② 交给后端写库：`id` 和 `created_at` 由**数据库**生成，本地不自己造。
+
+     ⚠️ **重名不在这里判** —— 交给后端（本地那份清单可能不是最新的，
+        比如别处刚加过同名；数据库的唯一约束才是权威）。
+
+     失败时把服务端写好的**中文提示**原样带回去（`err.message`），界面直接显示。 */
   const handleAdd = useCallback(
-    (input) => {
-      const result = addItem(input)
-      if (result.ok) sync()
-      return result
+    async (input) => {
+      const v = validateNewItem(input)
+      if (!v.ok) return { ok: false, reason: v.reason }
+
+      try {
+        const { item } = await createItem(v.fields)
+        // 服务端返回的那条写进本地存储 —— 存储是唯一真相，界面从存储读
+        appendItem(item)
+        sync()
+        return { ok: true, item }
+      } catch (err) {
+        // 打日志：真出问题时控制台能看到是哪一步断的
+        console.error('[add] 写云端失败', err)
+        return { ok: false, reason: 'server', message: err?.message || '没能连上服务器' }
+      }
     },
     [sync],
   )
@@ -432,7 +455,9 @@ export default function App() {
   }
 
   return (
-    <div className="app">
+    <>
+      <NebulaCanvas />
+      <div className="app">
       <header className="topbar">
         <span className="brand">想吃啥</span>
         <span className="brand-sub">中午不知道吃啥，问我</span>
@@ -468,17 +493,20 @@ export default function App() {
 
       <main className="main">
         {/* 首页要摆卡片网格，撑满容器才排得下多栏；其余三页保持 760px 的好读宽度 */}
-        <section className={page.hash === '#/' ? 'panel panel-wide' : 'panel'}>
+        <section className={page.hash === '#/' ? 'panel panel-wide' : 'panel panel-wide asymmetric'}>
           {page.hash !== '#/' && (
             <>
-              {/* 返回上一页。首页是入口，不需要这个按钮，所以只在其余三页出现。
-                  ⚠️ 没走 history.back()（直接输地址进来时会把人带出站外），
-                     而是回到"刚才那一页"，没有记录就回首页 —— 见 handleBack。 */}
+              {/* 返回上一页。首页是入口，不需要这个按钮，所以只在其余三页出现。 */}
               <button className="back-btn" type="button" onClick={handleBack}>
                 ← 返回
               </button>
-              <h1>{page.title}</h1>
-              {page.hint && <p className="hint">{page.hint}</p>}
+              {/* 打破对称布局的页面自己管理标题，App 不再重复渲染 */}
+              {page.hash !== '#/list' && page.hash !== '#/add' && page.hash !== '#/history' && (
+                <>
+                  <h1>{page.title}</h1>
+                  {page.hint && <p className="hint">{page.hint}</p>}
+                </>
+              )}
             </>
           )}
           {content}
@@ -515,5 +543,6 @@ export default function App() {
         </footer>
       </main>
     </div>
+    </>
   )
 }

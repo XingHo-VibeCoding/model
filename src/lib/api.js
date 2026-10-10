@@ -36,14 +36,18 @@ export const API_BASE = BASE
 const TIMEOUT_MS = 8000
 
 /**
- * 发一个 GET 请求并拆掉统一外壳。
+ * 发一个请求并拆掉统一外壳（GET / POST 共用）。
+ * @param {string} path 接口路径，如 '/api/items'
+ * @param {object} opts `{ method, body, signal, timeoutMs }`
+ *   · `body` 传了就自动 JSON 序列化 + 带上 Content-Type；
+ *     **不传就一个头都不多加** —— GET 带 Content-Type 反而可能触发跨域预检（OPTIONS）
  * @returns 成功时返回 `data` 里的内容；失败时 **抛出 Error**（带 `.code`）
  *
  * 为什么失败要抛而不是返回 {ok:false}：
  *   调用方几乎都是 `try { ... } catch` 的写法（首页抽取本来就是异步的），
  *   抛出去能直接落进已有的 catch —— 不用为接口这层再写一套分支。
  */
-async function getJson(path, { signal, timeoutMs = TIMEOUT_MS } = {}) {
+async function requestJson(path, { method = 'GET', body, signal, timeoutMs = TIMEOUT_MS } = {}) {
   const ctrl = new AbortController()
   let timedOut = false
 
@@ -56,11 +60,16 @@ async function getJson(path, { signal, timeoutMs = TIMEOUT_MS } = {}) {
     ctrl.abort()
   }, timeoutMs)
 
+  const headers = { Accept: 'application/json' }
+  if (body !== undefined) headers['Content-Type'] = 'application/json'
+
   let res
   try {
     res = await fetch(BASE + path, {
+      method,
       signal: ctrl.signal,
-      headers: { Accept: 'application/json' },
+      headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
     })
   } catch (err) {
     // 调用方主动取消 → 原样抛出，让上层认出来（它不该被当成"失败"）
@@ -78,28 +87,30 @@ async function getJson(path, { signal, timeoutMs = TIMEOUT_MS } = {}) {
     signal?.removeEventListener('abort', forwardAbort)
   }
 
+  /* ⚠️ 这里叫 resBody 而不是 body —— `body` 已经被上面的**参数**占用了（请求体），
+     重名会编译不过（Day 18 实测：rolldown 直接报 "can not be redeclared"）。 */
   const text = await res.text()
-  let body = null
+  let resBody = null
   try {
-    body = JSON.parse(text)
+    resBody = JSON.parse(text)
   } catch {
-    /* 不是 JSON —— 保持 body 为 null，下面统一报错 */
+    /* 不是 JSON —— 保持 resBody 为 null，下面统一报错 */
   }
 
-  if (!body || typeof body.ok !== 'boolean') {
+  if (!resBody || typeof resBody.ok !== 'boolean') {
     const e = new Error(`服务器返回了预期之外的内容（HTTP ${res.status}）`)
     e.code = 'BAD_RESPONSE'
     throw e
   }
 
-  if (body.ok !== true) {
+  if (resBody.ok !== true) {
     // 服务端自己报的错：它给的消息比我编的准，直接用
-    const e = new Error(body.error?.message || `请求失败（HTTP ${res.status}）`)
-    e.code = body.error?.code || `HTTP_${res.status}`
+    const e = new Error(resBody.error?.message || `请求失败（HTTP ${res.status}）`)
+    e.code = resBody.error?.code || `HTTP_${res.status}`
     throw e
   }
 
-  return body.data
+  return resBody.data
 }
 
 /* ── 接口 ①：读候选条目 ───────────────────────────────────────────── */ 
@@ -112,7 +123,7 @@ async function getJson(path, { signal, timeoutMs = TIMEOUT_MS } = {}) {
  *   { id, name, type, platform, spicy, tags, source, created_at }
  */
 export async function fetchItems({ signal } = {}) {
-  const data = await getJson('/api/items', { signal })
+  const data = await requestJson('/api/items', { signal })
   const items = Array.isArray(data?.items) ? data.items : []
 
   // tags 兜底成数组：接口理论上一定给数组，但真为 null 时页面会崩
@@ -133,7 +144,7 @@ export async function fetchItems({ signal } = {}) {
  *    显示历史**只读 `name`**（名称快照），所以照样显示得出来（PRD J4）。
  */
 export async function fetchHistory({ signal } = {}) {
-  const data = await getJson('/api/history', { signal })
+  const data = await requestJson('/api/history', { signal })
   const rows = Array.isArray(data?.entries) ? data.entries : []
 
   const entries = rows.map((row) => {
@@ -148,4 +159,30 @@ export async function fetchHistory({ signal } = {}) {
   })
 
   return { entries, total: typeof data?.total === 'number' ? data.total : entries.length }
+}
+
+/* ── 接口 ③：新增一个条目（Day 18 接上，页面 3「添加」用）────────────── */
+
+/**
+ * 把用户新加的一条写到云端。
+ * @param {{name:string,type:string,platform:string,spicy?:string,tags?:string[]}} payload
+ * @returns `{ item }` —— **服务端返回的那一条**（`id` / `created_at` 是数据库生成的）
+ *
+ * ⚠️ 调用方必须把返回的 `item` **原样写进本地存储**，不要自己再造一个 id ——
+ *    否则本地 id 和云端对不上，以后按 id 删除 / 更新就全错了。
+ *
+ * ⚠️ 失败时抛 Error，`err.code` 直接用服务端给的码：
+ *    `DUPLICATE_NAME`（重名）/ `INVALID_NAME` / `INVALID_TYPE` / `INVALID_PLATFORM` …
+ *    而 `err.message` **就是服务端写好的中文提示**，界面拿去直接显示即可，不用自己编。
+ */
+export async function createItem(payload) {
+  const data = await requestJson('/api/items', { method: 'POST', body: payload })
+  const item = data?.item
+  if (!item || typeof item !== 'object' || !item.id) {
+    const e = new Error('服务器没有返回新建的条目')
+    e.code = 'BAD_RESPONSE'
+    throw e
+  }
+  // tags 兜底成数组 —— 跟 fetchItems 同一个理由：真为 null 时页面会崩
+  return { item: { ...item, tags: Array.isArray(item.tags) ? item.tags : [] } }
 }

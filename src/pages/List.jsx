@@ -1,19 +1,28 @@
 import { useMemo, useState } from 'react'
-import { SPICY_LABEL, SPICY_MAX_OPTIONS, TAG_PRESETS, VIEW_STATE } from '../lib/constants.js'
+import {
+  SPICY_LABEL,
+  SPICY_MAX_OPTIONS,
+  TAG_PRESETS,
+  TYPE_LABEL,
+  VIEW_STATE,
+} from '../lib/constants.js'
 import { collectTags } from '../lib/filter.js'
-import ItemRow from '../components/ItemRow.jsx'
+import { platformSearchLabel, platformSearchUrl } from '../lib/platformLink.js'
 import EmptyState from '../components/EmptyState.jsx'
+import FoodImage from '../components/FoodImage.jsx'
 import ViewState from '../components/ViewState.jsx'
 
-/* 页面 2 · 我的清单（PRD §5）
-   - 列出全部条目，每条显示名称 / 类型 / 辣度 / 忌口标签（C4）
-   - 每条可删除（C2），删除后数量立即更新（C3）
-   - 计数区分来源：「共 N 个 · 其中你自己加了 M 个」（C1）
-   - 可选过滤，**默认不生效**（H1）；过滤条件会持久化（H4）
-   - 「恢复默认库」把内置条目补回来，已有的不重复添加（C3）
-   - 清单为空时给引导，不是空白（F1）
-   **Day 13 补齐四种状态**：正常 / 空 / 加载中 / 错误都有人管（见下面的 state）。
-   这个组件只负责显示和收集操作，数据都由 App 传进来。 */
+/* 页面 2 · 我的清单（杂志交替大图卡片版）
+   ─────────────────────────────────────────────────────────────────────
+   抛弃传统的"垂直列表"和之前"左右偏移"的不稳定感，改为：
+   · 顶部：大标题 + 水平滚动过滤 pills
+   · 主体：全宽交替大图卡片流
+     - 奇数项：左图（42%）右文，图片左侧大圆角
+     - 偶数项：左文右图（42%），图片右侧大圆角
+   · 卡片有真实美食图、玻璃态背景、hover 抬起发光
+   · 移动端自动改为上图下文垂直堆叠
+   ═══════════════════════════════════════════════════════════════════════ */
+
 export default function List({
   items,
   filter,
@@ -27,19 +36,12 @@ export default function List({
 }) {
   const [customTag, setCustomTag] = useState('')
 
-  /* 四种状态：**覆盖值优先，否则按自己的真实数据算**。
-     ⚠️ 状态由每个页面自己算 —— 清单页看的是"条目数量"，
-        跟首页推荐抽取的结果是两码事，不能共用。
-     ⭐ Day 17 之后四种都会自然发生：loading / error 由启动阶段给
-        （正在向服务器取数 / 取不到），success / empty 由条目数量算。 */
   const state =
     stateOverride ?? (items.length === 0 ? VIEW_STATE.empty : VIEW_STATE.success)
   const isBusy = state === VIEW_STATE.loading || state === VIEW_STATE.error
 
   const userCount = items.filter((it) => it.source === 'user').length
 
-  /* 过滤选项 = 预设 ∪ 清单里出现过的标签。
-     用 Set 去重，再排序；H5 要求用户在「添加」页自己输的标签也能出现在这里。 */
   const tagOptions = useMemo(() => {
     return [...new Set([...TAG_PRESETS, ...collectTags(items)])]
   }, [items])
@@ -53,7 +55,6 @@ export default function List({
     onFilterChange({ excludeTags: next })
   }
 
-  /* 在过滤区直接手输一个标签（H5：自己输的标签要能出现在过滤选项里并被勾上）*/
   function addCustomTag() {
     const tag = customTag.trim()
     if (!tag) return
@@ -61,8 +62,6 @@ export default function List({
     setCustomTag('')
   }
 
-  /* 加载中 / 错误：交给统一的四态外壳（骨架屏 / 错误页 + 重试）。
-     其余两种走下面的正常渲染 —— 空态仍用原来的 EmptyState，观感跟以前一模一样。 */
   if (isBusy) {
     return (
       <ViewState
@@ -77,10 +76,81 @@ export default function List({
   const isEmpty = state === VIEW_STATE.empty
 
   return (
-    <>
-      <div className="count-line">
-        共 <b>{items.length}</b> 个 · 其中你自己加了 <b>{userCount}</b> 个
-      </div>
+    <div className="list-magazine">
+      {/* 标题区 */}
+      <header className="list-magazine-header">
+        <div className="list-magazine-headline">
+          <h1 className="list-magazine-title">我的清单</h1>
+          {items.length > 0 && (
+            <span className="list-magazine-count">{items.length}</span>
+          )}
+        </div>
+        <p className="list-magazine-sub">
+          {isEmpty
+            ? '还没添加任何美食'
+            : `${items.length} 个候选 · ${userCount} 个自己添加`}
+        </p>
+
+        {/* 过滤条 */}
+        {!isEmpty && (
+          <div className="list-magazine-filters">
+            <div className="filter-group">
+              <span className="filter-label">辣度</span>
+              <select
+                className="select filter-select"
+                value={filter?.spicyMax ?? 'any'}
+                onChange={(e) => onFilterChange({ spicyMax: e.target.value })}
+              >
+                {SPICY_MAX_OPTIONS.map((v) => (
+                  <option key={v} value={v}>
+                    {SPICY_LABEL[v]}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="filter-pill-scroll">
+              {tagOptions.map((tag) => {
+                const on = excludeTags.includes(tag)
+                return (
+                  <button
+                    key={tag}
+                    className={`filter-pill ${on ? 'on' : ''}`}
+                    type="button"
+                    onClick={() => toggleTag(tag)}
+                    aria-pressed={on}
+                  >
+                    {on ? '✕ ' : ''}
+                    {tag}
+                  </button>
+                )
+              })}
+            </div>
+
+            <div className="filter-custom">
+              <input
+                className="input filter-input"
+                value={customTag}
+                placeholder="自定义忌口…"
+                onChange={(e) => setCustomTag(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    addCustomTag()
+                  }
+                }}
+              />
+              <button
+                className="btn ghost filter-add"
+                type="button"
+                onClick={addCustomTag}
+              >
+                加
+              </button>
+            </div>
+          </div>
+        )}
+      </header>
 
       {isEmpty ? (
         <EmptyState
@@ -96,71 +166,97 @@ export default function List({
         </EmptyState>
       ) : (
         <>
-          <ul className="item-list">
-            {items.map((item) => (
-              <ItemRow key={item.id} item={item} onRemove={onRemove} />
-            ))}
-          </ul>
-          <button className="btn ghost wide" type="button" onClick={onRestore}>
-            恢复默认库
-          </button>
-        </>
-      )}
+          <div className="list-magazine-flow">
+            {items.map((item, index) => {
+              const tags = Array.isArray(item.tags) ? item.tags : []
+              const searchUrl = platformSearchUrl(item.platform, item.name)
+              const searchLbl = platformSearchLabel(
+                item.platform,
+                item.name,
+                item.platform === 'tb' ? '淘宝' : '美团'
+              )
+              const isFlipped = index % 2 === 1
 
-      {/* ── 可选过滤。默认不生效，这是 PRD 里最硬的一条约束（H1） */}
-      <div className="filter-box">
-        <div className="filter-head">
-          过滤条件 <span className="dim">（默认不生效，想设才设）</span>
-        </div>
-
-        <label className="field">
-          <span className="field-label">辣度上限</span>
-          <select
-            className="select"
-            value={filter?.spicyMax ?? 'any'}
-            onChange={(e) => onFilterChange({ spicyMax: e.target.value })}
-          >
-            {SPICY_MAX_OPTIONS.map((v) => (
-              <option key={v} value={v}>
-                {SPICY_LABEL[v]}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <div className="field">
-          <span className="field-label">忌口（勾上的会被排除）</span>
-          <div className="tag-grid">
-            {tagOptions.map((tag) => {
-              const on = excludeTags.includes(tag)
               return (
-                <label key={tag} className={on ? 'tag-chip on' : 'tag-chip'}>
-                  <input type="checkbox" checked={on} onChange={() => toggleTag(tag)} />
-                  {tag}
-                </label>
+                <article
+                  key={item.id}
+                  className={`magazine-card ${isFlipped ? 'flipped' : ''}`}
+                  style={{ animationDelay: `${Math.min(index * 60, 600)}ms` }}
+                >
+                  <div className="magazine-card-visual">
+                    <FoodImage
+                      name={item.name}
+                      type={item.type}
+                      className="magazine-card-img"
+                    />
+                    <div className="magazine-card-img-overlay" />
+                  </div>
+
+                  <div className="magazine-card-body">
+                    <div className="magazine-card-meta">
+                      <span
+                        className={`magazine-card-type ${item.type}`}
+                      >
+                        {TYPE_LABEL[item.type]}
+                      </span>
+                      {item.source === 'user' && (
+                        <span className="magazine-card-source">我加的</span>
+                      )}
+                    </div>
+
+                    <h3 className="magazine-card-name">{item.name}</h3>
+
+                    <div className="magazine-card-tags">
+                      <span className="badge">{SPICY_LABEL[item.spicy]}</span>
+                      {tags.map((tag) => (
+                        <span className="badge tag" key={tag}>
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+
+                    <div className="magazine-card-actions">
+                      {searchUrl ? (
+                        <a
+                          className="magazine-card-link"
+                          href={searchUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          aria-label={searchLbl}
+                        >
+                          去{item.platform === 'tb' ? '淘宝' : '美团'}搜 →
+                        </a>
+                      ) : (
+                        <span className="magazine-card-link disabled">
+                          未指定平台
+                        </span>
+                      )}
+                      <button
+                        className="magazine-card-delete"
+                        type="button"
+                        onClick={() => onRemove(item.id)}
+                        aria-label={`删除 ${item.name}`}
+                      >
+                        删除
+                      </button>
+                    </div>
+                  </div>
+                </article>
               )
             })}
           </div>
 
-          <div className="inline-add">
-            <input
-              className="input"
-              value={customTag}
-              placeholder="自己输一个，比如 折耳根"
-              onChange={(e) => setCustomTag(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') {
-                  e.preventDefault()
-                  addCustomTag()
-                }
-              }}
-            />
-            <button className="btn ghost" type="button" onClick={addCustomTag}>
-              加上
+          <div className="list-magazine-footer">
+            <button
+              className="btn ghost wide"
+              type="button"
+              onClick={onRestore}
+            >
+              恢复默认库
             </button>
           </div>
-        </div>
-      </div>
-    </>
+        </>
+      )}
+    </div>
   )
 }
