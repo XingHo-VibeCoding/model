@@ -7,9 +7,10 @@
  * 不是事件函数 —— 所以不能用 exports.main(event, context)。
  *
  * ── 它提供什么 ─────────────────────────────────────────────────────
- *   GET /api/health    后端活着吗（不查库）
- *   GET /api/items     读全部候选条目          ← 首页候选池、清单页都用它
- *   GET /api/history   读最近的历史记录（倒序）  ← 历史记录页
+ *   GET  /api/health    后端活着吗（不查库）
+ *   GET  /api/items     读全部候选条目           ← 首页候选池、清单页都用它
+ *   POST /api/items     新增一个条目（Day 18）    ← 添加页提交
+ *   GET  /api/history   读最近的历史记录（倒序）   ← 历史记录页
  *
  * 依据：仓库根目录 api-contract.md 第四节。
  *
@@ -46,6 +47,10 @@ const ENV_ID = process.env.TCB_ENV_ID || 'model-d5gisaem106ad6a18'
 
 /* 数据库 HTTP API 的根地址（PostgREST 风格：/v1/rdb/rest/<表名>） */
 const REST_BASE = `https://${ENV_ID}.api.tcloudbasegateway.com/v1/rdb/rest`
+
+/* items 表对外暴露的列。**读**和**写完之后读回**都走它 ——
+   抽成常量是为了让两处形状永远一致（契约里 items 的字段就是这 8 个）。 */
+const ITEMS_COLS = 'id,name,type,platform,spicy,tags,source,created_at'
 
 /* 默认返回条数 */
 const DEFAULT_ITEMS_LIMIT = 500
@@ -98,6 +103,88 @@ async function queryTable(table, params) {
   } catch {
     throw new Error(`查 ${table} 返回的不是 JSON：${text.slice(0, 200)}`)
   }
+}
+
+/* ── 写数据库 ─────────────────────────────────────────────────────── */
+
+/**
+ * 往一张表插一行（PostgREST 的 POST）。
+ * @param {string} table  表名（**只允许代码里写死的字面量**）
+ * @param {object} row    要插入的行，键 = 数据库列名
+ * @returns {object} 插入后的那一行
+ *
+ * ── 为什么要 `Prefer: return=representation` ──────────────────────
+ * 默认 PostgREST 插入成功后只回一个 `201` 空体。加上这个头，数据库会把
+ * **刚插进去的那一行**一起回给我们 —— 前端就能立刻拿到 `id` / `created_at`
+ * （这两个都是数据库生成的，只有拿到才知道）。
+ *
+ * ⚠️ 万一这个平台不支持该头（响应体是空的）→ 兜底：按 `name` 回读一次。
+ *    名字有唯一约束，回读一定只命中那一行。
+ *
+ * ⚠️ 这里**不做**"什么算冲突"的业务判断 —— 冲突（比如重名）由调用方按
+ *    `err.pgCode` 决定怎么回，因为那是业务规则，不该埋进工具函数。
+ *    这里只负责把数据库的 SQLSTATE 原样带出来：
+ *      · `23505` = 唯一约束冲突（我们 = 重名）
+ *      · `23514` = CHECK 约束（字段取值不合法）
+ */
+async function insertRow(table, row) {
+  const apiKey = process.env.TCB_API_KEY
+  if (!apiKey) {
+    const err = new Error('没有配置 TCB_API_KEY（云函数环境变量里缺这个）')
+    err.code = 'NO_API_KEY'
+    throw err
+  }
+
+  const res = await fetch(`${REST_BASE}/${table}`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      // 让数据库把插入结果回给我们（见上面的说明）
+      Prefer: 'return=representation',
+    },
+    body: JSON.stringify(row),
+  })
+
+  const text = await res.text()
+
+  if (!res.ok) {
+    // 错误体是 JSON：{ code, message, requestId }
+    // `code` 是 SQLSTATE，但 **CloudBase 网关会包一层** → `DATABASE_23505`
+    // （剥前缀再判是调用方的事，见 handleCreateItem —— 这里只原样带出去）
+    let payload = null
+    try {
+      payload = JSON.parse(text)
+    } catch {
+      /* 不是 JSON —— 保持 null，下面报原文 */
+    }
+    const err = new Error(`写 ${table} 失败：HTTP ${res.status} ${text.slice(0, 300)}`)
+    err.code = 'DB_WRITE_FAILED'
+    err.httpStatus = res.status
+    err.pgCode = payload?.code || null
+    throw err
+  }
+
+  // 正常：PostgREST 回一个数组，里面是插入的行
+  try {
+    const rows = JSON.parse(text)
+    if (Array.isArray(rows) && rows.length > 0) return rows[0]
+  } catch {
+    /* 落到下面的兜底 */
+  }
+
+  // 兜底：没拿到插入结果 → 按 name 回读（name 有唯一约束，只会命中一行）
+  const found = await queryTable(table, {
+    select: ITEMS_COLS,
+    name: `eq.${row.name}`,
+    limit: '1',
+  })
+  if (Array.isArray(found) && found.length > 0) return found[0]
+
+  const err = new Error(`写 ${table} 之后没能读回那一行（name=${row.name}）`)
+  err.code = 'DB_WRITE_READBACK_FAILED'
+  throw err
 }
 
 /* ── 统一响应工具 ─────────────────────────────────────────────────── */
@@ -161,7 +248,7 @@ async function handleItems(res, url) {
   const limit = parseLimit(url.searchParams.get('limit'), DEFAULT_ITEMS_LIMIT, MAX_ITEMS_LIMIT)
 
   const rows = await queryTable('items', {
-    select: 'id,name,type,platform,spicy,tags,source,created_at',
+    select: ITEMS_COLS,
     order: 'id',
     limit: String(limit),
   })
@@ -182,14 +269,186 @@ async function handleHistory(res, url) {
   sendOk(res, { entries: rows, total: rows.length })
 }
 
+/* POST /api/items —— 新增一个条目
+ *
+ * 依据：api-contract.md 第四节「2. POST /api/items」。
+ *
+ * ── 为什么校验要在应用层再做一遍（数据库明明已经有 CHECK / UNIQUE）──
+ * 因为**数据库报的错是英文 SQLSTATE**（如 `23505 duplicate key value ...`），
+ * 直接透给前端用户看到的是一串看不懂的东西。契约要求提示是**中文**，
+ * 所以应用层先把能判的都判掉、给出人话；数据库那层退化成最后一道保险。
+ *
+ * ── source 为什么由服务端定死 ──────────────────────────────────────
+ * 契约写 `source` 固定 `user`，**前端不用传也不能传** —— 否则有人能提交
+ * `source:'builtin'` 冒充内置条目，混进"永远不会被筛掉"的那一类。
+ */
+
+/* 三个枚举字段的合法取值 —— 与 db/schema.sql 的 CHECK 约束一一对应。
+   在这里再列一遍，只为了能把错误翻成中文。 */
+const VALID_TYPES = ['dish', 'shop']
+const VALID_PLATFORMS = ['mt', 'tb', 'any']
+const VALID_SPICY = ['none', 'mild', 'medium', 'hot', 'any']
+
+/* 名称长度（契约、数据库 char_length BETWEEN 1 AND 20，三处保持一致） */
+const NAME_MIN = 1
+const NAME_MAX = 20
+
+/** 按**字符**算长度：中文一个字算一个。
+    用 `[...s]` 而不是 `s.length` —— 后者算的是 UTF-16 码元，
+    对 emoji 之类会算成 2，跟数据库的 char_length 对不上。 */
+function charLength(s) {
+  return [...s].length
+}
+
+/**
+ * 把请求体读完。
+ * ⚠️ HTTP 云函数里 `req` 是**流**，不是现成的对象 —— 得一截一截收再拼成字符串。
+ *    没有 `req.body`（那是 Express 才有的）。
+ */
+function readBody(req, maxBytes = 64 * 1024) {
+  return new Promise((resolve, reject) => {
+    const chunks = []
+    let size = 0
+    req.on('data', (c) => {
+      size += c.length
+      // 我们最大的请求也就几百字节；给个天花板，防止有人灌垃圾把内存占满
+      if (size > maxBytes) {
+        req.destroy()
+        reject(Object.assign(new Error('请求体超过 64KB'), { code: 'BODY_TOO_LARGE' }))
+        return
+      }
+      chunks.push(c)
+    })
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+    req.on('error', reject)
+  })
+}
+
+async function handleCreateItem(req, res) {
+  /* ① 读请求体、解析 JSON */
+  let raw = ''
+  try {
+    raw = await readBody(req)
+  } catch {
+    return sendErr(res, 400, 'INVALID_BODY', '请求体读取失败，请重试')
+  }
+
+  let payload
+  try {
+    payload = JSON.parse(raw)
+  } catch {
+    return sendErr(res, 400, 'INVALID_BODY', '请求体必须是 JSON 格式')
+  }
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return sendErr(res, 400, 'INVALID_BODY', '请求体必须是一个 JSON 对象')
+  }
+
+  /* ② name —— 必填；去空白后 1–20 字；**不允许首尾带空白** */
+  if (payload.name === undefined || payload.name === null) {
+    return sendErr(res, 400, 'INVALID_NAME', '缺少必填字段：name（名称）')
+  }
+  if (typeof payload.name !== 'string') {
+    return sendErr(res, 400, 'INVALID_NAME', '名称必须是文字')
+  }
+  // JS 正则里的 \s 已包含全角空格 U+3000，所以 trim() 就够
+  const name = payload.name.trim()
+  if (name === '') {
+    return sendErr(res, 400, 'INVALID_NAME', '名称不能为空')
+  }
+  if (name !== payload.name) {
+    return sendErr(res, 400, 'INVALID_NAME', '名称首尾不能有空白，去掉后再试一次')
+  }
+  const len = charLength(name)
+  if (len < NAME_MIN || len > NAME_MAX) {
+    return sendErr(res, 400, 'INVALID_NAME', `名称长度需要在 1–20 字之间（现在 ${len} 字）`)
+  }
+
+  /* ③ type —— 必填，只能是菜或店 */
+  if (payload.type === undefined || payload.type === null) {
+    return sendErr(res, 400, 'INVALID_TYPE', '缺少必填字段：type（类别）')
+  }
+  const type = String(payload.type).trim()
+  if (!VALID_TYPES.includes(type)) {
+    return sendErr(res, 400, 'INVALID_TYPE', '类别只能是「菜」(dish) 或「店」(shop)')
+  }
+
+  /* ④ platform —— 必填，只能是三个平台之一 */
+  if (payload.platform === undefined || payload.platform === null) {
+    return sendErr(res, 400, 'INVALID_PLATFORM', '缺少必填字段：platform（平台）')
+  }
+  const platform = String(payload.platform).trim()
+  if (!VALID_PLATFORMS.includes(platform)) {
+    return sendErr(
+      res,
+      400,
+      'INVALID_PLATFORM',
+      '平台只能是 mt（美团）/ tb（淘宝闪购）/ any（不限）'
+    )
+  }
+
+  /* ⑤ spicy —— 可选，不传即 any */
+  const spicyRaw = payload.spicy
+  const spicy =
+    spicyRaw === undefined || spicyRaw === null || spicyRaw === ''
+      ? 'any'
+      : String(spicyRaw).trim()
+  if (!VALID_SPICY.includes(spicy)) {
+    return sendErr(res, 400, 'INVALID_SPICY', '辣度只能是 none / mild / medium / hot / any')
+  }
+
+  /* ⑥ tags —— 可选，不传即空数组 */
+  let tags = []
+  if (payload.tags !== undefined && payload.tags !== null) {
+    if (!Array.isArray(payload.tags)) {
+      return sendErr(res, 400, 'INVALID_TAGS', '忌口标签必须是一个数组')
+    }
+    tags = payload.tags.map((t) => String(t).trim()).filter((t) => t !== '')
+  }
+
+  /* ⑦ 写库。source 由**服务端**定死为 user（见上面注释） */
+  try {
+    const item = await insertRow('items', { name, type, platform, spicy, tags, source: 'user' })
+    // 余力加练：成功留一条日志 —— 以后查"这条是什么时候谁加进去的"有据可循
+    console.log(
+      '[api] POST /api/items 成功',
+      JSON.stringify({ id: item?.id, name, type, platform })
+    )
+    return sendOk(res, { item }, 201)
+  } catch (err) {
+    /* ⚠️ CloudBase 网关会把 PostgreSQL 的 SQLSTATE **包一层**，给的是 `DATABASE_23505`；
+       而原生 PostgREST 给的是裸的 `23505`。**两种都得认**。
+       Day 18 实测踩到：第一版只判裸值，结果重名没被认出来，当成 500 报出去了。 */
+    const pg = String(err.pgCode || '').replace(/^DATABASE_/, '')
+
+    // 唯一约束冲突 = 重名 → 契约要求翻成 409，**不能让它变成 500**
+    if (pg === '23505') {
+      console.log('[api] POST /api/items 被拒（重名）', JSON.stringify({ name }))
+      return sendErr(res, 409, 'DUPLICATE_NAME', `已经有叫「${name}」的条目了，换个名字吧`)
+    }
+    // CHECK 约束 —— 应用层理论上已挡住，兜底也给中文
+    if (pg === '23514') {
+      console.log(
+        '[api] POST /api/items 被拒（字段不合法）',
+        JSON.stringify({ name, detail: err.message })
+      )
+      return sendErr(res, 400, 'INVALID_FIELD', '有字段的取值不合法，检查一下类别/平台/辣度')
+    }
+    console.log('[api] POST /api/items 失败', JSON.stringify({ name, detail: err.message }))
+    throw err // 交给最外层统一报 500
+  }
+}
+
 /* ── 路由 ─────────────────────────────────────────────────────────── */
 
 /* 每条路径都认"带 /api 前缀"和"不带"两种写法 —— 网关是否把前缀透传给函数
    各环境配置不同，两个都认就不用担心这个问题。 */
 const ROUTES = [
-  { path: ['/', '/api/health'],          method: 'GET', fn: (res) => handleHealth(res) },
-  { path: ['/api/items', '/items'],      method: 'GET', fn: (res, url) => handleItems(res, url) },
-  { path: ['/api/history', '/history'],  method: 'GET', fn: (res, url) => handleHistory(res, url) },
+  { path: ['/', '/api/health'],          method: 'GET',  fn: (res) => handleHealth(res) },
+  { path: ['/api/items', '/items'],      method: 'GET',  fn: (res, url) => handleItems(res, url) },
+  // 同一个路径、不同方法：读是 GET，写是 POST（Day 18 加的）
+  // ⚠️ 路由按 method 匹配，所以两条不会打架
+  { path: ['/api/items', '/items'],      method: 'POST', fn: (res, url, req) => handleCreateItem(req, res) },
+  { path: ['/api/history', '/history'],  method: 'GET',  fn: (res, url) => handleHistory(res, url) },
 ]
 
 const server = http.createServer(async (req, res) => {
@@ -218,7 +477,7 @@ const server = http.createServer(async (req, res) => {
     if (!hit) {
       return sendErr(res, 404, 'NOT_FOUND', `没有这个接口：${req.method} ${url.pathname}`)
     }
-    await hit.fn(res, url)
+    await hit.fn(res, url, req)
   } catch (err) {
     console.error('[api] 处理失败', err)
     const detail = err && err.message ? err.message : '未知错误'
